@@ -7,6 +7,7 @@ import 'services/data_transform_service.dart';
 import 'services/model_mapper_service.dart';
 import 'services/column_inspector_service.dart';
 import 'services/dataset_analysis_service.dart';
+import 'services/csv_export_service.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -233,23 +234,44 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   Padding(
                     padding: const EdgeInsets.all(8.0),
-                    child: ElevatedButton(
-                      onPressed: () {
-                        setState(() {
-                          _parsedRows = null;
-                          _filteredRows = null;
-                          _headers = null;
-                          _fileName = null;
-                          _searchQuery = '';
-                          _searchColumn = null;
-                          _products = null;
-                          _salesOrderLines = null;
-                          _purchaseOrderLines = null;
-                          _inventoryTransactions = null;
-                          _analysis = null;
-                        });
-                      },
-                      child: const Text('Import Another File'),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        ElevatedButton(
+                          onPressed: () {
+                            if (_filteredRows != null && _headers != null) {
+                              final exportFileName = _fileName?.replaceFirst(RegExp(r'\.[^.]*$'), '') ?? 'export';
+                              CsvExportService.exportToCsv(
+                                _filteredRows!,
+                                _headers!,
+                                '$exportFileName-${DateTime.now().millisecondsSinceEpoch}.csv',
+                              );
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('CSV exported successfully!')),
+                              );
+                            }
+                          },
+                          child: const Text('Export as CSV'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              _parsedRows = null;
+                              _filteredRows = null;
+                              _headers = null;
+                              _fileName = null;
+                              _searchQuery = '';
+                              _searchColumn = null;
+                              _products = null;
+                              _salesOrderLines = null;
+                              _purchaseOrderLines = null;
+                              _inventoryTransactions = null;
+                              _analysis = null;
+                            });
+                          },
+                          child: const Text('Import Another File'),
+                        ),
+                      ],
                     ),
                   ),
                 ],
