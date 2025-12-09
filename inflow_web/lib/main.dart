@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'services/file_import_service.dart';
 import 'services/csv_parser_service.dart';
+import 'services/data_transform_service.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -44,7 +45,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (files.isNotEmpty) {
       // Only parse the first file for now
       final file = files.first;
-      final rows = CsvParserService.parseCsv(file);
+      var rows = CsvParserService.parseCsv(file);
+      // Guess common date columns
+      final dateColumns = rows.isNotEmpty
+          ? rows.first.keys.where((k) => k.toLowerCase().contains('date')).toList()
+          : <String>[];
+      rows = DataTransformService.transformRows(rows, dateColumns: dateColumns);
       setState(() {
         _parsedRows = rows;
         _filteredRows = rows;
