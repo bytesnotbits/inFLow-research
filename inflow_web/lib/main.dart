@@ -4,7 +4,9 @@ import 'package:file_picker/file_picker.dart';
 import 'services/file_import_service.dart';
 import 'services/csv_parser_service.dart';
 import 'services/data_transform_service.dart';
+import 'services/model_mapper_service.dart';
 import 'services/column_inspector_service.dart';
+import 'services/dataset_analysis_service.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -34,15 +36,19 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-    ColumnStats? _selectedColumnStats;
+  // For demo: store mapped objects
+  List<Product>? _products;
+  List<SalesOrderLine>? _salesOrderLines;
+  List<PurchaseOrderLine>? _purchaseOrderLines;
+  List<InventoryTransaction>? _inventoryTransactions;
+  ColumnStats? _selectedColumnStats;
+  DatasetAnalysis? _analysis;
   List<Map<String, String>>? _parsedRows;
   List<Map<String, String>>? _filteredRows;
   List<String>? _headers;
   String? _fileName;
   String _searchQuery = '';
-  String? _searchColumn;
-
-  Future<void> _importFiles() async {
+  String? _searchColumn;  Future<void> _importFiles() async {
     final files = await FileImportService.pickFiles();
     if (files.isNotEmpty) {
       // Only parse the first file for now
@@ -53,6 +59,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ? rows.first.keys.where((k) => k.toLowerCase().contains('date')).toList()
           : <String>[];
       rows = DataTransformService.transformRows(rows, dateColumns: dateColumns);
+
+      // Map to domain models (try all types, filter nulls)
+      final products = rows.map(ModelMapperService.mapToProduct).whereType<Product>().toList();
+      final salesOrderLines = rows.map(ModelMapperService.mapToSalesOrderLine).whereType<SalesOrderLine>().toList();
+      final purchaseOrderLines = rows.map(ModelMapperService.mapToPurchaseOrderLine).whereType<PurchaseOrderLine>().toList();
+      final inventoryTransactions = rows.map(ModelMapperService.mapToInventoryTransaction).whereType<InventoryTransaction>().toList();
+
+      // Analyze dataset
+      final analysis = DatasetAnalysisService.analyzeDataset(rows, rows.isNotEmpty ? rows.first.keys.toList() : []);
+
       setState(() {
         _parsedRows = rows;
         _filteredRows = rows;
@@ -60,6 +76,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _fileName = file.name;
         _searchQuery = '';
         _searchColumn = null;
+        _products = products;
+        _salesOrderLines = salesOrderLines;
+        _purchaseOrderLines = purchaseOrderLines;
+        _inventoryTransactions = inventoryTransactions;
+        _analysis = analysis;
       });
     }
   }
@@ -110,7 +131,30 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(8.0),
-                    child: Text('Preview: $_fileName', style: const TextStyle(fontSize: 18)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Preview: $_fileName', style: const TextStyle(fontSize: 18)),
+                        if (_analysis != null) ...[
+                          Text('Rows: ${_analysis!.rowCount}, Columns: ${_analysis!.columnCount}'),
+                          if (_analysis!.dateRanges.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text('Date Ranges:', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            for (final entry in _analysis!.dateRanges.entries)
+                              Text('  ${entry.key}: ${entry.value.range} (${entry.value.count} dates)'),
+                          ],
+                        ],
+                        const SizedBox(height: 8),
+                        if (_products != null)
+                          Text('Products mapped: ${_products!.length}'),
+                        if (_salesOrderLines != null)
+                          Text('SalesOrderLines mapped: ${_salesOrderLines!.length}'),
+                        if (_purchaseOrderLines != null)
+                          Text('PurchaseOrderLines mapped: ${_purchaseOrderLines!.length}'),
+                        if (_inventoryTransactions != null)
+                          Text('InventoryTransactions mapped: ${_inventoryTransactions!.length}'),
+                      ],
+                    ),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
@@ -198,6 +242,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           _fileName = null;
                           _searchQuery = '';
                           _searchColumn = null;
+                          _products = null;
+                          _salesOrderLines = null;
+                          _purchaseOrderLines = null;
+                          _inventoryTransactions = null;
+                          _analysis = null;
                         });
                       },
                       child: const Text('Import Another File'),
