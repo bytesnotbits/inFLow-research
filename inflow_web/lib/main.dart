@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'services/file_import_service.dart';
 import 'services/csv_parser_service.dart';
 import 'services/data_transform_service.dart';
+import 'services/column_inspector_service.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -33,6 +34,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+    ColumnStats? _selectedColumnStats;
   List<Map<String, String>>? _parsedRows;
   List<Map<String, String>>? _filteredRows;
   List<String>? _headers;
@@ -66,6 +68,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_parsedRows == null || _searchQuery.isEmpty || _searchColumn == null) {
       setState(() {
         _filteredRows = _parsedRows;
+        _selectedColumnStats = _searchColumn != null && _headers != null && _parsedRows != null
+            ? ColumnInspectorService.inspectColumns(_parsedRows!, _headers!)[_searchColumn!]
+            : null;
       });
       return;
     }
@@ -74,6 +79,9 @@ class _HomeScreenState extends State<HomeScreen> {
         final value = row[_searchColumn!]?.toLowerCase() ?? '';
         return value.contains(_searchQuery.toLowerCase());
       }).toList();
+      _selectedColumnStats = _searchColumn != null && _headers != null && _parsedRows != null
+          ? ColumnInspectorService.inspectColumns(_parsedRows!, _headers!)[_searchColumn!]
+          : null;
     });
   }
   @override
@@ -106,33 +114,61 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        DropdownButton<String>(
-                          hint: const Text('Select column'),
-                          value: _searchColumn,
-                          items: _headers!.map((h) => DropdownMenuItem(value: h, child: Text(h))).toList(),
-                          onChanged: (value) {
-                            setState(() {
-                              _searchColumn = value;
-                            });
-                            _filterRows();
-                          },
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            decoration: const InputDecoration(
-                              labelText: 'Search',
-                              border: OutlineInputBorder(),
-                              isDense: true,
+                        Row(
+                          children: [
+                            DropdownButton<String>(
+                              hint: const Text('Select column'),
+                              value: _searchColumn,
+                              items: _headers!.map((h) => DropdownMenuItem(value: h, child: Text(h))).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  _searchColumn = value;
+                                  _selectedColumnStats = value != null && _headers != null && _parsedRows != null
+                                      ? ColumnInspectorService.inspectColumns(_parsedRows!, _headers!)[value]
+                                      : null;
+                                });
+                                _filterRows();
+                              },
                             ),
-                            onChanged: (value) {
-                              _searchQuery = value;
-                              _filterRows();
-                            },
-                          ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextField(
+                                decoration: const InputDecoration(
+                                  labelText: 'Search',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                onChanged: (value) {
+                                  _searchQuery = value;
+                                  _filterRows();
+                                },
+                              ),
+                            ),
+                          ],
                         ),
+                        if (_selectedColumnStats != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Card(
+                              elevation: 2,
+                              child: Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Column: $_searchColumn', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    Text('Type: ${_selectedColumnStats!.type}'),
+                                    Text('Null/Empty Count: ${_selectedColumnStats!.nullCount}'),
+                                    Text('Unique Value Count: ${_selectedColumnStats!.uniqueCount}'),
+                                    Text('Sample Values: ${_selectedColumnStats!.sampleValues.join(", ")}'),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
