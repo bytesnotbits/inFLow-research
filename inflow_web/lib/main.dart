@@ -1,4 +1,8 @@
+
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'services/file_import_service.dart';
+import 'services/csv_parser_service.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -20,9 +24,52 @@ class InflowWebApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  List<Map<String, String>>? _parsedRows;
+  List<Map<String, String>>? _filteredRows;
+  List<String>? _headers;
+  String? _fileName;
+  String _searchQuery = '';
+  String? _searchColumn;
+
+  Future<void> _importFiles() async {
+    final files = await FileImportService.pickFiles();
+    if (files.isNotEmpty) {
+      // Only parse the first file for now
+      final file = files.first;
+      final rows = CsvParserService.parseCsv(file);
+      setState(() {
+        _parsedRows = rows;
+        _filteredRows = rows;
+        _headers = rows.isNotEmpty ? rows.first.keys.toList() : [];
+        _fileName = file.name;
+        _searchQuery = '';
+        _searchColumn = null;
+      });
+    }
+  }
+
+  void _filterRows() {
+    if (_parsedRows == null || _searchQuery.isEmpty || _searchColumn == null) {
+      setState(() {
+        _filteredRows = _parsedRows;
+      });
+      return;
+    }
+    setState(() {
+      _filteredRows = _parsedRows!.where((row) {
+        final value = row[_searchColumn!]?.toLowerCase() ?? '';
+        return value.contains(_searchQuery.toLowerCase());
+      }).toList();
+    });
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -30,47 +77,92 @@ class HomeScreen extends StatelessWidget {
         title: const Text('inFlow Inventory Research'),
       ),
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'Welcome! Import your inFlow files to begin.',
-              style: TextStyle(fontSize: 20),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () async {
-                // Import files using FileImportService
-                final importService = await import('package:inflow_web/services/file_import_service.dart');
-                final files = await importService.FileImportService.pickFiles();
-                if (files.isNotEmpty) {
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Files Imported'),
-                      content: SizedBox(
-                        width: 300,
-                        child: ListView(
-                          shrinkWrap: true,
-                          children: files.map<Widget>((file) => ListTile(
-                            title: Text(file.name),
-                          )).toList(),
+        child: _parsedRows == null
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'Welcome! Import your inFlow files to begin.',
+                    style: TextStyle(fontSize: 20),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: _importFiles,
+                    child: const Text('Import Files'),
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Text('Preview: $_fileName', style: const TextStyle(fontSize: 18)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                    child: Row(
+                      children: [
+                        DropdownButton<String>(
+                          hint: const Text('Select column'),
+                          value: _searchColumn,
+                          items: _headers!.map((h) => DropdownMenuItem(value: h, child: Text(h))).toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              _searchColumn = value;
+                            });
+                            _filterRows();
+                          },
                         ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('OK'),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'Search',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            onChanged: (value) {
+                              _searchQuery = value;
+                              _filterRows();
+                            },
+                          ),
                         ),
                       ],
                     ),
-                  );
-                }
-              },
-              child: const Text('Import Files'),
-            ),
-          ],
-        ),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: _headers!
+                            .map((h) => DataColumn(label: Text(h, style: const TextStyle(fontWeight: FontWeight.bold))))
+                            .toList(),
+                        rows: (_filteredRows ?? []).take(20).map((row) {
+                          return DataRow(
+                            cells: _headers!.map((h) => DataCell(Text(row[h] ?? ''))).toList(),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          _parsedRows = null;
+                          _filteredRows = null;
+                          _headers = null;
+                          _fileName = null;
+                          _searchQuery = '';
+                          _searchColumn = null;
+                        });
+                      },
+                      child: const Text('Import Another File'),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }
