@@ -8,6 +8,7 @@ import 'services/model_mapper_service.dart';
 import 'services/column_inspector_service.dart';
 import 'services/dataset_analysis_service.dart';
 import 'services/csv_export_service.dart';
+import 'services/validation_service.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -49,16 +50,37 @@ class _HomeScreenState extends State<HomeScreen> {
   List<String>? _headers;
   String? _fileName;
   String _searchQuery = '';
-  String? _searchColumn;  Future<void> _importFiles() async {
-    final files = await FileImportService.pickFiles();
-    if (files.isNotEmpty) {
-      // Only parse the first file for now
+  String? _searchColumn;
+
+  Future<void> _importFiles() async {
+    try {
+      final files = await FileImportService.pickFiles();
+      if (files.isEmpty) {
+        _showErrorDialog('No file selected', 'Please select a CSV file to import.');
+        return;
+      }
+
       final file = files.first;
+
+      // Validate file
+      final fileValidation = ValidationService.validateFile(file.name, file.size);
+      if (!fileValidation.isValid) {
+        _showErrorDialog('Invalid File', fileValidation.message);
+        return;
+      }
+
+      // Parse CSV
       var rows = CsvParserService.parseCsv(file);
+
+      // Validate parsed data
+      final dataValidation = ValidationService.validateCsvData(rows, rows.isNotEmpty ? rows.first.keys.toList() : []);
+      if (!dataValidation.isValid) {
+        _showErrorDialog('Invalid CSV Data', dataValidation.message);
+        return;
+      }
+
       // Guess common date columns
-      final dateColumns = rows.isNotEmpty
-          ? rows.first.keys.where((k) => k.toLowerCase().contains('date')).toList()
-          : <String>[];
+      final dateColumns = rows.first.keys.where((k) => k.toLowerCase().contains('date')).toList();
       rows = DataTransformService.transformRows(rows, dateColumns: dateColumns);
 
       // Map to domain models (try all types, filter nulls)
@@ -68,12 +90,12 @@ class _HomeScreenState extends State<HomeScreen> {
       final inventoryTransactions = rows.map(ModelMapperService.mapToInventoryTransaction).whereType<InventoryTransaction>().toList();
 
       // Analyze dataset
-      final analysis = DatasetAnalysisService.analyzeDataset(rows, rows.isNotEmpty ? rows.first.keys.toList() : []);
+      final analysis = DatasetAnalysisService.analyzeDataset(rows, rows.first.keys.toList());
 
       setState(() {
         _parsedRows = rows;
         _filteredRows = rows;
-        _headers = rows.isNotEmpty ? rows.first.keys.toList() : [];
+        _headers = rows.first.keys.toList();
         _fileName = file.name;
         _searchQuery = '';
         _searchColumn = null;
@@ -83,7 +105,33 @@ class _HomeScreenState extends State<HomeScreen> {
         _inventoryTransactions = inventoryTransactions;
         _analysis = analysis;
       });
+
+      _showSuccessSnackBar('File imported successfully!');
+    } catch (e) {
+      _showErrorDialog('Import Error', 'An unexpected error occurred: $e');
     }
+  }
+
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSuccessSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
+    );
   }
 
   void _filterRows() {
@@ -240,15 +288,19 @@ class _HomeScreenState extends State<HomeScreen> {
                         ElevatedButton(
                           onPressed: () {
                             if (_filteredRows != null && _headers != null) {
-                              final exportFileName = _fileName?.replaceFirst(RegExp(r'\.[^.]*$'), '') ?? 'export';
-                              CsvExportService.exportToCsv(
-                                _filteredRows!,
-                                _headers!,
-                                '$exportFileName-${DateTime.now().millisecondsSinceEpoch}.csv',
-                              );
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('CSV exported successfully!')),
-                              );
+                              try {
+                                final exportFileName = _fileName?.replaceFirst(RegExp(r'\.[^.]*$'), '') ?? 'export';
+                                CsvExportService.exportToCsv(
+                                  _filteredRows!,
+                                  _headers!,
+                                  '$exportFileName-${DateTime.now().millisecondsSinceEpoch}.csv',
+                                );
+                                _showSuccessSnackBar('CSV exported successfully!');
+                              } catch (e) {
+                                _showErrorDialog('Export Error', 'Failed to export CSV: $e');
+                              }
+                            } else {
+                              _showErrorDialog('Export Error', 'No data available to export.');
                             }
                           },
                           child: const Text('Export as CSV'),
