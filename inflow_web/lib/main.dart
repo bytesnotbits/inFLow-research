@@ -39,8 +39,33 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: () {
-                // TODO: Implement file picker and import logic
+              onPressed: () async {
+                // Import files using FileImportService
+                final importService = await import('package:inflow_web/services/file_import_service.dart');
+                final files = await importService.FileImportService.pickFiles();
+                if (files.isNotEmpty) {
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Files Imported'),
+                      content: SizedBox(
+                        width: 300,
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: files.map<Widget>((file) => ListTile(
+                            title: Text(file.name),
+                          )).toList(),
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('OK'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
               },
               child: const Text('Import Files'),
             ),
