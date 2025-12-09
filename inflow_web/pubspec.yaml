@@ -1,0 +1,28 @@
+name: inflow_web
+description: A Flutter web app for inFlow Inventory data analysis
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_picker: ^6.1.1
+  csv: ^6.0.0
+  excel: ^2.0.6
+  provider: ^6.1.1
+  fl_chart: ^0.63.0
+  hive: ^2.2.3
+  syncfusion_flutter_datagrid: ^24.1.41
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lint: ^2.1.2
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
