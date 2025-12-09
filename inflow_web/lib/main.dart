@@ -9,6 +9,7 @@ import 'services/column_inspector_service.dart';
 import 'services/dataset_analysis_service.dart';
 import 'services/csv_export_service.dart';
 import 'services/validation_service.dart';
+import 'models/imported_dataset.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -51,6 +52,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _fileName;
   String _searchQuery = '';
   String? _searchColumn;
+  
+  // Multi-file support
+  List<ImportedDataset> _importedDatasets = [];
+  ImportedDataset? _activeDataset;
 
   Future<void> _importFiles() async {
     try {
@@ -60,56 +65,74 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      final file = files.first;
+      for (final file in files) {
+        // Validate file
+        final fileValidation = ValidationService.validateFile(file.name, file.size);
+        if (!fileValidation.isValid) {
+          _showErrorDialog('Invalid File: ${file.name}', fileValidation.message);
+          continue;
+        }
 
-      // Validate file
-      final fileValidation = ValidationService.validateFile(file.name, file.size);
-      if (!fileValidation.isValid) {
-        _showErrorDialog('Invalid File', fileValidation.message);
-        return;
+        // Parse CSV
+        var rows = CsvParserService.parseCsv(file);
+
+        // Validate parsed data
+        final dataValidation = ValidationService.validateCsvData(rows, rows.isNotEmpty ? rows.first.keys.toList() : []);
+        if (!dataValidation.isValid) {
+          _showErrorDialog('Invalid CSV Data: ${file.name}', dataValidation.message);
+          continue;
+        }
+
+        // Guess common date columns
+        final dateColumns = rows.first.keys.where((k) => k.toLowerCase().contains('date')).toList();
+        rows = DataTransformService.transformRows(rows, dateColumns: dateColumns);
+
+        // Create dataset
+        final dataset = ImportedDataset(
+          fileName: file.name,
+          importedAt: DateTime.now(),
+          rows: rows,
+          headers: rows.first.keys.toList(),
+        );
+
+        setState(() {
+          _importedDatasets.add(dataset);
+          _activeDataset = dataset;
+          _updateActiveDataset(dataset);
+        });
       }
 
-      // Parse CSV
-      var rows = CsvParserService.parseCsv(file);
-
-      // Validate parsed data
-      final dataValidation = ValidationService.validateCsvData(rows, rows.isNotEmpty ? rows.first.keys.toList() : []);
-      if (!dataValidation.isValid) {
-        _showErrorDialog('Invalid CSV Data', dataValidation.message);
-        return;
+      if (_importedDatasets.isNotEmpty) {
+        _showSuccessSnackBar('${_importedDatasets.length} file(s) imported successfully!');
       }
-
-      // Guess common date columns
-      final dateColumns = rows.first.keys.where((k) => k.toLowerCase().contains('date')).toList();
-      rows = DataTransformService.transformRows(rows, dateColumns: dateColumns);
-
-      // Map to domain models (try all types, filter nulls)
-      final products = rows.map(ModelMapperService.mapToProduct).whereType<Product>().toList();
-      final salesOrderLines = rows.map(ModelMapperService.mapToSalesOrderLine).whereType<SalesOrderLine>().toList();
-      final purchaseOrderLines = rows.map(ModelMapperService.mapToPurchaseOrderLine).whereType<PurchaseOrderLine>().toList();
-      final inventoryTransactions = rows.map(ModelMapperService.mapToInventoryTransaction).whereType<InventoryTransaction>().toList();
-
-      // Analyze dataset
-      final analysis = DatasetAnalysisService.analyzeDataset(rows, rows.first.keys.toList());
-
-      setState(() {
-        _parsedRows = rows;
-        _filteredRows = rows;
-        _headers = rows.first.keys.toList();
-        _fileName = file.name;
-        _searchQuery = '';
-        _searchColumn = null;
-        _products = products;
-        _salesOrderLines = salesOrderLines;
-        _purchaseOrderLines = purchaseOrderLines;
-        _inventoryTransactions = inventoryTransactions;
-        _analysis = analysis;
-      });
-
-      _showSuccessSnackBar('File imported successfully!');
     } catch (e) {
       _showErrorDialog('Import Error', 'An unexpected error occurred: $e');
     }
+  }
+
+  void _updateActiveDataset(ImportedDataset dataset) {
+    // Map to domain models (try all types, filter nulls)
+    final products = dataset.rows.map(ModelMapperService.mapToProduct).whereType<Product>().toList();
+    final salesOrderLines = dataset.rows.map(ModelMapperService.mapToSalesOrderLine).whereType<SalesOrderLine>().toList();
+    final purchaseOrderLines = dataset.rows.map(ModelMapperService.mapToPurchaseOrderLine).whereType<PurchaseOrderLine>().toList();
+    final inventoryTransactions = dataset.rows.map(ModelMapperService.mapToInventoryTransaction).whereType<InventoryTransaction>().toList();
+
+    // Analyze dataset
+    final analysis = DatasetAnalysisService.analyzeDataset(dataset.rows, dataset.headers);
+
+    setState(() {
+      _parsedRows = dataset.rows;
+      _filteredRows = dataset.rows;
+      _headers = dataset.headers;
+      _fileName = dataset.fileName;
+      _searchQuery = '';
+      _searchColumn = null;
+      _products = products;
+      _salesOrderLines = salesOrderLines;
+      _purchaseOrderLines = purchaseOrderLines;
+      _inventoryTransactions = inventoryTransactions;
+      _analysis = analysis;
+    });
   }
 
   void _showErrorDialog(String title, String message) {
@@ -174,7 +197,31 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: _importFiles,
                     child: const Text('Import Files'),
                   ),
+                  if (_importedDatasets.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    Text('${_importedDatasets.length} file(s) imported', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 300,
+                      width: 400,
+                      child: ListView.builder(
+                        itemCount: _importedDatasets.length,
+                        itemBuilder: (context, index) {
+                          final dataset = _importedDatasets[index];
+                          return Card(
+                            child: ListTile(
+                              title: Text(dataset.fileName),
+                              subtitle: Text('${dataset.rowCount} rows · ${dataset.headers.length} columns'),
+                              onTap: () => _updateActiveDataset(dataset),
+                              selected: _activeDataset == dataset,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ],
+              )
               )
             : Column(
                 children: [
@@ -319,9 +366,15 @@ class _HomeScreenState extends State<HomeScreen> {
                               _purchaseOrderLines = null;
                               _inventoryTransactions = null;
                               _analysis = null;
+                              _importedDatasets = [];
+                              _activeDataset = null;
                             });
                           },
-                          child: const Text('Import Another File'),
+                          child: const Text('Clear All'),
+                        ),
+                        ElevatedButton(
+                          onPressed: _importFiles,
+                          child: const Text('Import More Files'),
                         ),
                       ],
                     ),
