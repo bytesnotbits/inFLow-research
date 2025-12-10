@@ -1,19 +1,22 @@
-import 'models/product.dart';
-import 'models/sales_order_line.dart';
-import 'models/purchase_order_line.dart';
-import 'models/inventory_transaction.dart';
+import 'dart:async';
+import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'services/file_import_service.dart';
+import 'package:flutter/material.dart';
+
+import 'models/imported_dataset.dart';
+import 'models/inventory_transaction.dart';
+import 'models/product.dart';
+import 'models/purchase_order_line.dart';
+import 'models/sales_order_line.dart';
+import 'services/column_inspector_service.dart';
+import 'services/csv_export_service.dart';
 import 'services/csv_parser_service.dart';
 import 'services/data_transform_service.dart';
-import 'services/model_mapper_service.dart';
-import 'services/column_inspector_service.dart';
 import 'services/dataset_analysis_service.dart';
-import 'services/csv_export_service.dart';
+import 'services/file_import_service.dart';
+import 'services/model_mapper_service.dart';
 import 'services/validation_service.dart';
-import 'models/imported_dataset.dart';
 
 void main() {
   runApp(const InflowWebApp());
@@ -60,6 +63,19 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showMetadataPanel = false;
   final ScrollController _verticalScrollController = ScrollController();
   final ScrollController _horizontalScrollController = ScrollController();
+  List<double> _columnWidths = [];
+  static const double _minColumnWidth = 140;
+  static const int _largeFileThresholdBytes = 5 * 1024 * 1024;
+  static const String _largeFileIntroMessage =
+      'Heads up! That file is over 5 MB — this could take a moment.';
+  static const List<String> _largeFileFollowUpMessages = [
+    "This file's really heavy. Maybe I need to work out more.",
+    "Parsing file. I love this! Crunching numbers is my thing!",
+    'Still working over here — promise the app has not frozen.',
+  ];
+  Timer? _loadingMessageTimer;
+  int _loadingMessageIndex = 0;
+  String _loadingMessage = 'Importing files... please wait';
 
   // Multi-file support
   List<ImportedDataset> _importedDatasets = [];
@@ -69,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _verticalScrollController.dispose();
     _horizontalScrollController.dispose();
+    _loadingMessageTimer?.cancel();
     super.dispose();
   }
 
@@ -83,6 +100,10 @@ class _HomeScreenState extends State<HomeScreen> {
             'No file selected', 'Please select a CSV file to import.');
         return;
       }
+      final hasLargeFile = files.any(
+        (file) => (file.size ?? 0) > _largeFileThresholdBytes,
+      );
+      _startLoadingMessages(hasLargeFile);
 
       for (final file in files) {
         // Validate file
@@ -137,6 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       setState(() {
         _isImporting = false;
+        _stopLoadingMessages();
       });
     }
   }
@@ -177,6 +199,14 @@ class _HomeScreenState extends State<HomeScreen> {
       _inventoryTransactions = inventoryTransactions;
       _analysis = analysis;
       _showMetadataPanel = false;
+      _columnWidths = dataset.headers
+          .map(
+            (header) => math.max<double>(
+              _minColumnWidth,
+              header.length * 9,
+            ),
+          )
+          .toList();
     });
   }
 
@@ -255,6 +285,132 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_inventoryTransactions != null)
           Text('Inventory transactions: ${_inventoryTransactions!.length}'),
       ],
+    );
+  }
+
+  void _startLoadingMessages(bool hasLargeFile) {
+    _loadingMessageTimer?.cancel();
+    _loadingMessageIndex = 0;
+    if (hasLargeFile) {
+      if (mounted) {
+        setState(() {
+          _loadingMessage = _largeFileIntroMessage;
+        });
+      } else {
+        _loadingMessage = _largeFileIntroMessage;
+      }
+      _loadingMessageTimer =
+          Timer.periodic(const Duration(seconds: 3), (timer) {
+        if (!mounted) return;
+        setState(() {
+          _loadingMessage = _largeFileFollowUpMessages[
+              _loadingMessageIndex % _largeFileFollowUpMessages.length];
+          _loadingMessageIndex++;
+        });
+      });
+    } else {
+      if (mounted) {
+        setState(() {
+          _loadingMessage = 'Importing files... please wait';
+        });
+      } else {
+        _loadingMessage = 'Importing files... please wait';
+      }
+    }
+  }
+
+  void _stopLoadingMessages() {
+    _loadingMessageTimer?.cancel();
+    _loadingMessageTimer = null;
+    _loadingMessageIndex = 0;
+    _loadingMessage = 'Importing files... please wait';
+  }
+
+  Widget _buildDataTableRow({
+    Map<String, String>? row,
+    bool isHeader = false,
+    bool isOdd = false,
+  }) {
+    final headers = _headers ?? [];
+    final backgroundColor = isHeader
+        ? Colors.blueGrey.shade50
+        : (isOdd ? Colors.grey.shade100 : Colors.white);
+    return Container(
+      color: backgroundColor,
+      child: Row(
+        children: List.generate(headers.length, (index) {
+          final header = headers[index];
+          final width = index < _columnWidths.length
+              ? _columnWidths[index]
+              : _minColumnWidth;
+          final text = isHeader ? header : (row?[header] ?? '');
+          return SizedBox(
+            width: width,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Text(
+                text,
+                overflow: TextOverflow.ellipsis,
+                style: isHeader
+                    ? const TextStyle(
+                        fontWeight: FontWeight.bold,
+                      )
+                    : const TextStyle(fontSize: 13),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildDataTableArea() {
+    if (_headers == null) return const SizedBox.shrink();
+    final rows = _filteredRows ?? [];
+    if (rows.isEmpty) {
+      return const Center(child: Text('No rows match your current filters.'));
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final headerWidth = _columnWidths.isNotEmpty
+            ? _columnWidths.reduce((value, element) => value + element)
+            : _headers!.length * _minColumnWidth;
+        final tableWidth = math.max(constraints.maxWidth, headerWidth);
+        return Scrollbar(
+          controller: _horizontalScrollController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _horizontalScrollController,
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: tableWidth,
+              height: constraints.maxHeight,
+              child: Column(
+                children: [
+                  _buildDataTableRow(isHeader: true),
+                  const Divider(height: 1, thickness: 1),
+                  Expanded(
+                    child: Scrollbar(
+                      controller: _verticalScrollController,
+                      thumbVisibility: true,
+                      child: ListView.builder(
+                        controller: _verticalScrollController,
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) {
+                          return _buildDataTableRow(
+                            row: rows[index],
+                            isOdd: index.isOdd,
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -356,6 +512,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Rows: ${_filteredRows?.length ?? 0}',
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
                             if (_selectedColumnStats != null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 8.0),
@@ -386,42 +549,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
-                      Expanded(
-                        child: Scrollbar(
-                          controller: _verticalScrollController,
-                          thumbVisibility: true,
-                          child: SingleChildScrollView(
-                            controller: _verticalScrollController,
-                            child: Scrollbar(
-                              controller: _horizontalScrollController,
-                              thumbVisibility: true,
-                              notificationPredicate: (notification) =>
-                                  notification.metrics.axis == Axis.horizontal,
-                              child: SingleChildScrollView(
-                                controller: _horizontalScrollController,
-                                scrollDirection: Axis.horizontal,
-                                child: DataTable(
-                                  columns: _headers!
-                                      .map((h) => DataColumn(
-                                          label: Text(h,
-                                              style: const TextStyle(
-                                                  fontWeight:
-                                                      FontWeight.bold))))
-                                      .toList(),
-                                  rows: (_filteredRows ?? []).map((row) {
-                                    return DataRow(
-                                      cells: _headers!
-                                          .map((h) =>
-                                              DataCell(Text(row[h] ?? '')))
-                                          .toList(),
-                                    );
-                                  }).toList(),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+                      Expanded(child: _buildDataTableArea()),
                       Padding(
                         padding: const EdgeInsets.all(8.0),
                         child: Row(
@@ -470,6 +598,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   _importedDatasets = [];
                                   _activeDataset = null;
                                   _showMetadataPanel = false;
+                                  _columnWidths = [];
                                 });
                               },
                               child: const Text('Clear All'),
@@ -533,17 +662,21 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_isImporting)
             Container(
               color: Colors.black54,
-              child: const Center(
+              child: Center(
                 child: Card(
                   elevation: 4,
                   child: Padding(
-                    padding: EdgeInsets.all(24.0),
+                    padding: const EdgeInsets.all(24.0),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
-                        Text('Importing files... please wait'),
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        Text(
+                          _loadingMessage,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 16),
+                        ),
                       ],
                     ),
                   ),
