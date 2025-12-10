@@ -6,9 +6,7 @@ class CsvParserService {
   static List<Map<String, String>> parseCsv(PlatformFile file) {
     final content = file.bytes != null
         ? utf8.decode(file.bytes!)
-        : file.readStream != null
-            ? utf8.decode(file.readStream!.toList().cast<int>())
-            : '';
+        : '';
     if (content.isEmpty) return [];
     final lines = const LineSplitter().convert(content);
     if (lines.isEmpty) return [];
