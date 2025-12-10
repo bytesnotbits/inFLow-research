@@ -6,6 +6,12 @@
 
 // ignore_for_file: type=lint
 
+import 'models/product.dart';
+import 'models/sales_order_line.dart';
+import 'models/purchase_order_line.dart';
+import 'models/inventory_transaction.dart';
+import 'services/column_inspector_service.dart'; // already there if needed
+import 'services/dataset_analysis_service.dart'; // already there if needed
 import 'dart:ui_web' as ui_web;
 import 'dart:async';
 
