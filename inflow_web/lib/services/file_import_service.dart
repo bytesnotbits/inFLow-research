@@ -8,6 +8,7 @@ class FileImportService {
       allowMultiple: true,
       type: FileType.custom,
       allowedExtensions: ['csv', 'xlsx'],
+      withData: true,
     );
     if (result != null) {
       return result.files;
@@ -19,9 +20,6 @@ class FileImportService {
   static Future<Uint8List?> readFileBytes(PlatformFile file) async {
     if (file.bytes != null) {
       return file.bytes;
-    }
-    if (file.path != null) {
-      return await FilePicker.platform.readFile(file.path!);
     }
     return null;
   }

@@ -227,7 +227,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ],
               )
-              )
             : Column(
                 children: [
                   Padding(
