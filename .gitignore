@@ -1,0 +1,2 @@
+# Ignore local SDK archives or other oversized artifacts
+inflow_web/flutter_linux_3.16.9-stable.tar.xz
