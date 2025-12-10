@@ -1,4 +1,9 @@
 
+import 'models/product.dart';
+import 'models/sales_order_line.dart';
+import 'models/purchase_order_line.dart';
+import 'models/inventory_transaction.dart';
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'services/file_import_service.dart';
