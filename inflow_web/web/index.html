@@ -26,5 +26,19 @@
         <img class="center" src="splash/img/light-1x.png" />
     </picture>
     <script src="flutter.js" defer></script>
+    <script>
+      var serviceWorkerVersion = null;
+      window.addEventListener('load', function () {
+        _flutter.loader.loadEntrypoint({
+          serviceWorker: {
+            serviceWorkerVersion: serviceWorkerVersion,
+          },
+        }).then(function (engineInitializer) {
+          return engineInitializer.initializeEngine();
+        }).then(function (appRunner) {
+          return appRunner.runApp();
+        });
+      });
+    </script>
 </body>
 </html>

@@ -1,0 +1,27 @@
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #1f6feb;
+  font-family: "Roboto", "Helvetica Neue", Arial, sans-serif;
+}
+
+#splash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #1f6feb;
+}
+
+#splash img {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+}
