@@ -23,7 +23,11 @@ class ColumnStats {
   });
 
   factory ColumnStats.fromValues(List<String?> values) {
-    final nonNullValues = values.where((v) => v != null && v.trim().isNotEmpty).toList();
+    final nonNullValues = values
+    .whereType<String>()
+    .map((v) => v.trim())
+    .where((v) => v.isNotEmpty)
+    .toList();
     final nullCount = values.length - nonNullValues.length;
     final uniqueCount = nonNullValues.toSet().length;
     final sampleValues = nonNullValues.take(5).toList();
