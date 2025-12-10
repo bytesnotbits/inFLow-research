@@ -8,7 +8,10 @@ class CsvParserService {
   static List<Map<String, String>> parseCsv(PlatformFile file) {
     var content = file.bytes != null ? utf8.decode(file.bytes!) : '';
     if (content.isEmpty) return [];
-    content = content.replaceFirst(RegExp(r'^\ufeff'), '');
+    content = content
+        .replaceFirst(RegExp(r'^\ufeff'), '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
     final csvRows = const CsvToListConverter(eol: '\n', shouldParseNumbers: false).convert(content);
     if (csvRows.isEmpty) return [];
 
