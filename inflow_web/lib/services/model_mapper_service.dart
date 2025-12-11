@@ -60,7 +60,7 @@ class ModelMapperService {
         transactionType: row['TransactionType'] ?? '',
         date: DateTime.tryParse(row['Date'] ?? '') ?? DateTime(1970),
         location: row['Location'] ?? '',
-        sublocation: row['Sublocation'] ?? '',
+        sublocation: row['ReelNumber'] ?? row['Sublocation'] ?? '',
         orderNumber: row['OrderNumber'] ?? '',
         quantity: double.tryParse(row['Quantity'] ?? '0') ?? 0,
         qtyBefore: double.tryParse(row['QtyBefore'] ?? '0') ?? 0,

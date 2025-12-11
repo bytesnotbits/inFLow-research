@@ -2,10 +2,14 @@ class ColumnInspectorService {
   static Map<String, ColumnStats> inspectColumns(List<Map<String, String>> rows, List<String> headers) {
     final stats = <String, ColumnStats>{};
     for (final header in headers) {
-      final values = rows.map((row) => row[header]).toList();
-      stats[header] = ColumnStats.fromValues(values);
+      stats[header] = inspectColumn(rows, header);
     }
     return stats;
+  }
+
+  static ColumnStats inspectColumn(List<Map<String, String>> rows, String header) {
+    final values = rows.map((row) => row[header]).toList();
+    return ColumnStats.fromValues(values);
   }
 }
 

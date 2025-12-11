@@ -13,6 +13,7 @@ import 'services/column_inspector_service.dart';
 import 'services/csv_export_service.dart';
 import 'services/csv_parser_service.dart';
 import 'services/data_transform_service.dart';
+import 'services/dataset_classifier_service.dart';
 import 'services/dataset_analysis_service.dart';
 import 'services/file_import_service.dart';
 import 'services/model_mapper_service.dart';
@@ -45,7 +46,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   // For demo: store mapped objects
   List<Product>? _products;
   List<SalesOrderLine>? _salesOrderLines;
@@ -59,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _fileName;
   String _searchQuery = '';
   String? _searchColumn;
+  final Map<String, ColumnStats> _columnStatsCache = {};
   bool _isImporting = false;
   bool _showMetadataPanel = false;
   final ScrollController _verticalScrollController = ScrollController();
@@ -76,16 +79,39 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _loadingMessageTimer;
   int _loadingMessageIndex = 0;
   String _loadingMessage = 'Importing files... please wait';
+  static const int _rowCountWarningThreshold = 10000;
+  bool _isRowCountWarningActive = false;
+  late final AnimationController _rowPulseController;
+  late final Animation<Color?> _rowPulseColor;
 
   // Multi-file support
   List<ImportedDataset> _importedDatasets = [];
   ImportedDataset? _activeDataset;
 
   @override
+  void initState() {
+    super.initState();
+    _rowPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _rowPulseColor = ColorTween(
+      begin: Colors.red.shade400,
+      end: Colors.red.shade900,
+    ).animate(
+      CurvedAnimation(
+        parent: _rowPulseController,
+        curve: Curves.easeInOut,
+      ),
+    );
+  }
+
+  @override
   void dispose() {
     _verticalScrollController.dispose();
     _horizontalScrollController.dispose();
     _loadingMessageTimer?.cancel();
+    _rowPulseController.dispose();
     super.dispose();
   }
 
@@ -93,6 +119,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _isImporting = true;
     });
+    // Allow the loading UI to render before heavy work begins.
+    await Future<void>.delayed(const Duration(milliseconds: 16));
     try {
       final files = await FileImportService.pickFiles();
       if (files.isEmpty) {
@@ -115,8 +143,8 @@ class _HomeScreenState extends State<HomeScreen> {
           continue;
         }
 
-        // Parse CSV
-        var rows = CsvParserService.parseCsv(file);
+        // Parse CSV off the main isolate
+        var rows = await CsvParserService.parseCsvAsync(file);
 
         // Validate parsed data
         final dataValidation = ValidationService.validateCsvData(
@@ -128,18 +156,27 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         // Guess common date columns
-        final dateColumns = rows.first.keys
-            .where((k) => k.toLowerCase().contains('date'))
-            .toList();
-        rows =
-            DataTransformService.transformRows(rows, dateColumns: dateColumns);
+        final dateColumns = rows.isNotEmpty
+            ? rows.first.keys
+                .where((k) => k.toLowerCase().contains('date'))
+                .toList()
+            : <String>[];
+        final isReelDataset =
+            DatasetClassifierService.isLikelyReelDataset(file.name, rows);
+        rows = DataTransformService.transformRows(
+          rows,
+          dateColumns: dateColumns,
+          columnRenames: isReelDataset
+              ? const {'Sublocation': 'ReelNumber'}
+              : null,
+        );
 
         // Create dataset
         final dataset = ImportedDataset(
           fileName: file.name,
           importedAt: DateTime.now(),
           rows: rows,
-          headers: rows.first.keys.toList(),
+          headers: rows.isNotEmpty ? rows.first.keys.toList() : <String>[],
         );
 
         setState(() {
@@ -185,7 +222,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // Analyze dataset
     final analysis =
         DatasetAnalysisService.analyzeDataset(dataset.rows, dataset.headers);
-
     setState(() {
       _parsedRows = dataset.rows;
       _filteredRows = dataset.rows;
@@ -198,6 +234,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _purchaseOrderLines = purchaseOrderLines;
       _inventoryTransactions = inventoryTransactions;
       _analysis = analysis;
+      _columnStatsCache.clear();
+      _selectedColumnStats =
+          _searchColumn != null ? _getColumnStats(_searchColumn!) : null;
+      _isRowCountWarningActive =
+          dataset.rows.length > _rowCountWarningThreshold;
       _showMetadataPanel = false;
       _columnWidths = dataset.headers
           .map(
@@ -208,6 +249,7 @@ class _HomeScreenState extends State<HomeScreen> {
           )
           .toList();
     });
+    _syncRowCountWarningAnimation();
   }
 
   void _showErrorDialog(String title, String message) {
@@ -234,27 +276,53 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _filterRows() {
     if (_parsedRows == null || _searchQuery.isEmpty || _searchColumn == null) {
+      final rowCount = _parsedRows?.length ?? 0;
       setState(() {
         _filteredRows = _parsedRows;
         _selectedColumnStats =
-            _searchColumn != null && _headers != null && _parsedRows != null
-                ? ColumnInspectorService.inspectColumns(
-                    _parsedRows!, _headers!)[_searchColumn!]
-                : null;
+            _searchColumn != null ? _getColumnStats(_searchColumn!) : null;
+        _isRowCountWarningActive =
+            rowCount > _rowCountWarningThreshold;
       });
+      _syncRowCountWarningAnimation();
       return;
     }
+    final filtered = _parsedRows!.where((row) {
+      final value = row[_searchColumn!]?.toLowerCase() ?? '';
+      return value.contains(_searchQuery.toLowerCase());
+    }).toList();
+    final rowCount = filtered.length;
     setState(() {
-      _filteredRows = _parsedRows!.where((row) {
-        final value = row[_searchColumn!]?.toLowerCase() ?? '';
-        return value.contains(_searchQuery.toLowerCase());
-      }).toList();
+      _filteredRows = filtered;
       _selectedColumnStats =
-          _searchColumn != null && _headers != null && _parsedRows != null
-              ? ColumnInspectorService.inspectColumns(
-                  _parsedRows!, _headers!)[_searchColumn!]
-              : null;
+          _searchColumn != null ? _getColumnStats(_searchColumn!) : null;
+      _isRowCountWarningActive =
+          rowCount > _rowCountWarningThreshold;
     });
+    _syncRowCountWarningAnimation();
+  }
+
+  ColumnStats? _getColumnStats(String column) {
+    if (_parsedRows == null) return null;
+    if (_columnStatsCache.containsKey(column)) {
+      return _columnStatsCache[column];
+    }
+    final stats = ColumnInspectorService.inspectColumn(_parsedRows!, column);
+    _columnStatsCache[column] = stats;
+    return stats;
+  }
+
+  void _syncRowCountWarningAnimation() {
+    if (_isRowCountWarningActive) {
+      if (!_rowPulseController.isAnimating) {
+        _rowPulseController.repeat(reverse: true);
+      }
+    } else {
+      if (_rowPulseController.isAnimating) {
+        _rowPulseController.stop();
+      }
+      _rowPulseController.reset();
+    }
   }
 
   Widget _buildMetadataContent() {
@@ -285,6 +353,31 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_inventoryTransactions != null)
           Text('Inventory transactions: ${_inventoryTransactions!.length}'),
       ],
+    );
+  }
+
+  Widget _buildRowCountIndicator() {
+    final rowCount = _filteredRows?.length ?? 0;
+    if (!_isRowCountWarningActive) {
+      return Text(
+        'Rows: $rowCount',
+        style: TextStyle(
+          color: Colors.grey.shade600,
+        ),
+      );
+    }
+    return AnimatedBuilder(
+      animation: _rowPulseController,
+      builder: (context, child) {
+        final color = _rowPulseColor.value ?? Colors.red;
+        return Text(
+          'Rows: $rowCount',
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.bold,
+          ),
+        );
+      },
     );
   }
 
@@ -485,12 +578,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                   onChanged: (value) {
                                     setState(() {
                                       _searchColumn = value;
-                                      _selectedColumnStats = value != null &&
-                                              _headers != null &&
-                                              _parsedRows != null
-                                          ? ColumnInspectorService
-                                              .inspectColumns(_parsedRows!,
-                                                  _headers!)[value]
+                                      _selectedColumnStats = value != null
+                                          ? _getColumnStats(value)
                                           : null;
                                     });
                                     _filterRows();
@@ -513,12 +602,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ],
                             ),
                             const SizedBox(height: 8),
-                            Text(
-                              'Rows: ${_filteredRows?.length ?? 0}',
-                              style: TextStyle(
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
+                            _buildRowCountIndicator(),
                             if (_selectedColumnStats != null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 8.0),

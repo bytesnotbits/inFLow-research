@@ -35,17 +35,30 @@ class DataTransformService {
   }
 
   /// Applies transformations to all rows.
-  static List<Map<String, String>> transformRows(List<Map<String, String>> rows, {List<String>? dateColumns}) {
+  static List<Map<String, String>> transformRows(
+    List<Map<String, String>> rows, {
+    List<String>? dateColumns,
+    Map<String, String>? columnRenames,
+  }) {
     return rows.map((row) {
       final trimmed = trimRow(row);
+      final normalized = Map<String, String>.from(trimmed);
       if (dateColumns != null) {
         for (final col in dateColumns) {
-          if (trimmed.containsKey(col)) {
-            trimmed[col] = normalizeDate(trimmed[col]!);
+          if (normalized.containsKey(col)) {
+            normalized[col] = normalizeDate(normalized[col]!);
           }
         }
       }
-      return trimmed;
+      if (columnRenames == null || columnRenames.isEmpty) {
+        return normalized;
+      }
+      final renamed = <String, String>{};
+      normalized.forEach((key, value) {
+        final newKey = columnRenames[key] ?? key;
+        renamed[newKey] = value;
+      });
+      return renamed;
     }).toList();
   }
 }
