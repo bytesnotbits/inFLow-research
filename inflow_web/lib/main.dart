@@ -46,6 +46,15 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+enum _ColumnVisibilityAction { showAll, hideSelected, keepSelected }
+
+class _ColumnVisibilityResult {
+  final _ColumnVisibilityAction action;
+  final Set<String> columns;
+
+  const _ColumnVisibilityResult(this.action, this.columns);
+}
+
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   // For demo: store mapped objects
@@ -69,6 +78,7 @@ class _HomeScreenState extends State<HomeScreen>
   Timer? _globalSearchDebounce;
   final Map<String, int> _datasetMatchCounts = {};
   double _catalogWidthFraction = 0.4;
+  Set<String>? _visibleColumns;
   bool _isImporting = false;
   bool _showMetadataPanel = false;
   final ScrollController _verticalScrollController = ScrollController();
@@ -253,6 +263,7 @@ class _HomeScreenState extends State<HomeScreen>
       _purchaseOrderLines = purchaseOrderLines;
       _inventoryTransactions = inventoryTransactions;
       _analysis = analysis;
+      _visibleColumns = null;
       _columnStatsCache.clear();
       _selectedColumnStats = null;
       _showMetadataPanel = false;
@@ -336,6 +347,23 @@ class _HomeScreenState extends State<HomeScreen>
     final stats = ColumnInspectorService.inspectColumn(_parsedRows!, column);
     _columnStatsCache[column] = stats;
     return stats;
+  }
+
+  List<String> get _displayedHeaders {
+    if (_headers == null) return [];
+    if (_visibleColumns == null) return _headers!;
+    return _headers!.where((header) => _visibleColumns!.contains(header)).toList();
+  }
+
+  double _getColumnWidth(String header) {
+    if (_headers == null || _columnWidths.isEmpty) {
+      return _minColumnWidth;
+    }
+    final index = _headers!.indexOf(header);
+    if (index >= 0 && index < _columnWidths.length) {
+      return _columnWidths[index];
+    }
+    return _minColumnWidth;
   }
 
   void _syncRowCountWarningAnimation() {
@@ -595,7 +623,7 @@ class _HomeScreenState extends State<HomeScreen>
                   DropdownButton<String>(
                     hint: const Text('Select column'),
                     value: _searchColumn,
-                    items: _headers!
+                    items: _displayedHeaders
                         .map((h) =>
                             DropdownMenuItem(value: h, child: Text(h)))
                         .toList(),
@@ -623,6 +651,11 @@ class _HomeScreenState extends State<HomeScreen>
                         _filterRows();
                       },
                     ),
+                  ),
+                  IconButton(
+                    tooltip: 'Column options',
+                    icon: const Icon(Icons.view_column),
+                    onPressed: _showColumnVisibilityDialog,
                   ),
                 ],
               ),
@@ -931,12 +964,134 @@ class _HomeScreenState extends State<HomeScreen>
     _syncRowCountWarningAnimation();
   }
 
+  Future<void> _showColumnVisibilityDialog() async {
+    if (_headers == null || _headers!.isEmpty) return;
+    final currentVisible = _visibleColumns ?? _headers!.toSet();
+    final result = await showDialog<_ColumnVisibilityResult>(
+      context: context,
+      builder: (context) {
+        final selected = <String>{};
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Column visibility'),
+              content: SizedBox(
+                width: 400,
+                height: 400,
+                child: ListView(
+                  children: _headers!.map((header) {
+                    final isSelected = selected.contains(header);
+                    return CheckboxListTile(
+                      value: isSelected,
+                      title: Text(header),
+                      onChanged: (value) {
+                        setStateDialog(() {
+                          if (value == true) {
+                            selected.add(header);
+                          } else {
+                            selected.remove(header);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    setStateDialog(() {
+                      selected
+                        ..clear()
+                        ..addAll(currentVisible);
+                    });
+                  },
+                  child: const Text('Select visible'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setStateDialog(() {
+                      selected.clear();
+                    });
+                  },
+                  child: const Text('Clear selection'),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      Navigator.of(context).pop(const _ColumnVisibilityResult(
+                    _ColumnVisibilityAction.showAll,
+                    {},
+                  )),
+                  child: const Text('Show all'),
+                ),
+                TextButton(
+                  onPressed: selected.isEmpty
+                      ? null
+                      : () => Navigator.of(context).pop(
+                            _ColumnVisibilityResult(
+                              _ColumnVisibilityAction.hideSelected,
+                              Set<String>.from(selected),
+                            ),
+                          ),
+                  child: const Text('Hide selected'),
+                ),
+                ElevatedButton(
+                  onPressed: selected.isEmpty
+                      ? null
+                      : () => Navigator.of(context).pop(
+                            _ColumnVisibilityResult(
+                              _ColumnVisibilityAction.keepSelected,
+                              Set<String>.from(selected),
+                            ),
+                          ),
+                  child: const Text('Keep only selected'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == null) return;
+    switch (result.action) {
+      case _ColumnVisibilityAction.showAll:
+        setState(() {
+          _visibleColumns = null;
+        });
+        break;
+      case _ColumnVisibilityAction.hideSelected:
+        final base = _visibleColumns ?? _headers!.toSet();
+        final updated = base.difference(result.columns);
+        setState(() {
+          _visibleColumns = updated.isEmpty ? null : updated;
+        });
+        break;
+      case _ColumnVisibilityAction.keepSelected:
+        setState(() {
+          _visibleColumns =
+              result.columns.isEmpty ? null : Set<String>.from(result.columns);
+        });
+        break;
+    }
+    if (_visibleColumns != null &&
+        _searchColumn != null &&
+        !_visibleColumns!.contains(_searchColumn!)) {
+      setState(() {
+        _searchColumn = null;
+        _selectedColumnStats = null;
+        _columnSearchController.clear();
+        _searchQuery = '';
+      });
+    }
+    _filterRows();
+  }
+
   Widget _buildDataTableRow({
     Map<String, String>? row,
     bool isHeader = false,
     bool isOdd = false,
   }) {
-    final headers = _headers ?? [];
+    final headers = _displayedHeaders;
     final backgroundColor = isHeader
         ? Colors.blueGrey.shade50
         : (isOdd ? Colors.grey.shade100 : Colors.white);
@@ -945,23 +1100,29 @@ class _HomeScreenState extends State<HomeScreen>
       child: Row(
         children: List.generate(headers.length, (index) {
           final header = headers[index];
-          final width = index < _columnWidths.length
-              ? _columnWidths[index]
-              : _minColumnWidth;
+          final width = _getColumnWidth(header);
           final text = isHeader ? header : (row?[header] ?? '');
+          final textWidget = Text(
+            text,
+            overflow: TextOverflow.ellipsis,
+            style: isHeader
+                ? const TextStyle(
+                    fontWeight: FontWeight.bold,
+                  )
+                : const TextStyle(fontSize: 13),
+          );
+          final cellChild = text.isNotEmpty
+              ? Tooltip(
+                  message: text,
+                  waitDuration: const Duration(milliseconds: 500),
+                  child: textWidget,
+                )
+              : textWidget;
           return SizedBox(
             width: width,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Text(
-                text,
-                overflow: TextOverflow.ellipsis,
-                style: isHeader
-                    ? const TextStyle(
-                        fontWeight: FontWeight.bold,
-                      )
-                    : const TextStyle(fontSize: 13),
-              ),
+              child: cellChild,
             ),
           );
         }),
@@ -971,15 +1132,18 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildDataTableArea() {
     if (_headers == null) return const SizedBox.shrink();
+    final headers = _displayedHeaders;
     final rows = _filteredRows ?? [];
     if (rows.isEmpty) {
       return const Center(child: Text('No rows match your current filters.'));
     }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final headerWidth = _columnWidths.isNotEmpty
-            ? _columnWidths.reduce((value, element) => value + element)
-            : _headers!.length * _minColumnWidth;
+        final headerWidth = headers.isNotEmpty
+            ? headers
+                .map(_getColumnWidth)
+                .fold<double>(0, (prev, width) => prev + width)
+            : headers.length * _minColumnWidth;
         final tableWidth = math.max(constraints.maxWidth, headerWidth);
         return Scrollbar(
           controller: _horizontalScrollController,
