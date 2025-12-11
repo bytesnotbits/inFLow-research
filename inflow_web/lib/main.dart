@@ -55,6 +55,26 @@ class _ColumnVisibilityResult {
   const _ColumnVisibilityResult(this.action, this.columns);
 }
 
+enum ImportStatus { success, empty, invalid, error }
+
+class ImportSummaryEntry {
+  final String fileName;
+  final ImportStatus status;
+  final int rows;
+  final int columns;
+  final bool isReel;
+  final String message;
+
+  const ImportSummaryEntry({
+    required this.fileName,
+    required this.status,
+    required this.rows,
+    required this.columns,
+    required this.isReel,
+    required this.message,
+  });
+}
+
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   // For demo: store mapped objects
@@ -80,6 +100,7 @@ class _HomeScreenState extends State<HomeScreen>
   double _catalogWidthFraction = 0.4;
   Set<String>? _visibleColumns;
   bool _isImporting = false;
+  List<ImportSummaryEntry> _lastImportSummary = [];
   bool _showMetadataPanel = false;
   final ScrollController _verticalScrollController = ScrollController();
   final ScrollController _horizontalScrollController = ScrollController();
@@ -142,6 +163,9 @@ class _HomeScreenState extends State<HomeScreen>
     });
     // Allow the loading UI to render before heavy work begins.
     await Future<void>.delayed(const Duration(milliseconds: 16));
+    final summaries = <ImportSummaryEntry>[];
+    final newDatasets = <ImportedDataset>[];
+    ImportedDataset? lastImportedDataset;
     try {
       final files = await FileImportService.pickFiles();
       if (files.isEmpty) {
@@ -155,63 +179,131 @@ class _HomeScreenState extends State<HomeScreen>
       _startLoadingMessages(hasLargeFile);
 
       for (final file in files) {
-        // Validate file
-        final fileValidation =
-            ValidationService.validateFile(file.name, file.size);
-        if (!fileValidation.isValid) {
-          _showErrorDialog(
-              'Invalid File: ${file.name}', fileValidation.message);
-          continue;
+        final fileName = file.name;
+        try {
+          // Validate file
+          final fileValidation =
+              ValidationService.validateFile(fileName, file.size);
+          if (!fileValidation.isValid) {
+            summaries.add(
+              ImportSummaryEntry(
+                fileName: fileName,
+                status: ImportStatus.invalid,
+                rows: 0,
+                columns: 0,
+                isReel: false,
+                message: fileValidation.message,
+              ),
+            );
+            continue;
+          }
+
+          // Parse CSV off the main isolate
+          var rows = await CsvParserService.parseCsvAsync(file);
+          if (rows.isEmpty) {
+            summaries.add(
+              ImportSummaryEntry(
+                fileName: fileName,
+                status: ImportStatus.empty,
+                rows: 0,
+                columns: 0,
+                isReel: false,
+                message: 'File contains no data rows.',
+              ),
+            );
+            continue;
+          }
+
+          // Validate parsed data
+          final headers = rows.first.keys.toList();
+          final dataValidation =
+              ValidationService.validateCsvData(rows, headers);
+          if (!dataValidation.isValid) {
+            summaries.add(
+              ImportSummaryEntry(
+                fileName: fileName,
+                status: ImportStatus.invalid,
+                rows: rows.length,
+                columns: headers.length,
+                isReel: false,
+                message: dataValidation.message,
+              ),
+            );
+            continue;
+          }
+
+          // Guess common date columns
+          final dateColumns = headers
+              .where((k) => k.toLowerCase().contains('date'))
+              .toList();
+          final isReelDataset =
+              DatasetClassifierService.isLikelyReelDataset(fileName, rows);
+          rows = DataTransformService.transformRows(
+            rows,
+            dateColumns: dateColumns,
+            columnRenames: isReelDataset
+                ? const {'Sublocation': 'ReelNumber'}
+                : null,
+          );
+
+          // Create dataset
+          final dataset = ImportedDataset(
+            fileName: fileName,
+            importedAt: DateTime.now(),
+            rows: rows,
+            headers: rows.first.keys.toList(),
+          );
+          newDatasets.add(dataset);
+          lastImportedDataset = dataset;
+          summaries.add(
+            ImportSummaryEntry(
+              fileName: fileName,
+              status: ImportStatus.success,
+              rows: dataset.rowCount,
+              columns: dataset.headers.length,
+              isReel: isReelDataset,
+              message:
+                  '${dataset.rowCount} row${dataset.rowCount == 1 ? '' : 's'}, ${dataset.headers.length} column${dataset.headers.length == 1 ? '' : 's'}',
+            ),
+          );
+        } catch (e) {
+          summaries.add(
+            ImportSummaryEntry(
+              fileName: fileName,
+              status: ImportStatus.error,
+              rows: 0,
+              columns: 0,
+              isReel: false,
+              message: 'Unexpected error: $e',
+            ),
+          );
         }
+      }
 
-        // Parse CSV off the main isolate
-        var rows = await CsvParserService.parseCsvAsync(file);
-
-        // Validate parsed data
-        final dataValidation = ValidationService.validateCsvData(
-            rows, rows.isNotEmpty ? rows.first.keys.toList() : []);
-        if (!dataValidation.isValid) {
-          _showErrorDialog(
-              'Invalid CSV Data: ${file.name}', dataValidation.message);
-          continue;
-        }
-
-        // Guess common date columns
-        final dateColumns = rows.isNotEmpty
-            ? rows.first.keys
-                .where((k) => k.toLowerCase().contains('date'))
-                .toList()
-            : <String>[];
-        final isReelDataset =
-            DatasetClassifierService.isLikelyReelDataset(file.name, rows);
-        rows = DataTransformService.transformRows(
-          rows,
-          dateColumns: dateColumns,
-          columnRenames: isReelDataset
-              ? const {'Sublocation': 'ReelNumber'}
-              : null,
-        );
-
-        // Create dataset
-        final dataset = ImportedDataset(
-          fileName: file.name,
-          importedAt: DateTime.now(),
-          rows: rows,
-          headers: rows.isNotEmpty ? rows.first.keys.toList() : <String>[],
-        );
-
+      if (newDatasets.isNotEmpty) {
         setState(() {
-          _importedDatasets.add(dataset);
+          _importedDatasets.addAll(newDatasets);
         });
-        _updateActiveDataset(dataset);
+        if (lastImportedDataset != null) {
+          _updateActiveDataset(lastImportedDataset!);
+        }
       }
 
       await _recomputeDatasetMatchCounts();
       _applyGlobalSearchToActiveDataset();
 
-      if (_importedDatasets.isNotEmpty) {
-        _showSuccessSnackBar(
-            '${_importedDatasets.length} file(s) imported successfully!');
+      final successCount = summaries
+          .where((entry) => entry.status == ImportStatus.success)
+          .length;
+      if (successCount > 0) {
+        _showSuccessSnackBar('$successCount file(s) imported successfully.');
+      }
+      final hasIssues = summaries.any(
+        (entry) => entry.status != ImportStatus.success,
+      );
+      if (hasIssues || successCount > 0) {
+        _lastImportSummary = List.unmodifiable(summaries);
+        _showImportSummaryDialog(summaries);
       }
     } catch (e) {
       _showErrorDialog('Import Error', 'An unexpected error occurred: $e');
@@ -299,6 +391,127 @@ class _HomeScreenState extends State<HomeScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.green),
     );
+  }
+
+  Future<void> _showImportSummaryDialog(
+    List<ImportSummaryEntry> entries,
+  ) async {
+    if (!mounted || entries.isEmpty) return;
+    final successCount =
+        entries.where((e) => e.status == ImportStatus.success).length;
+    final emptyCount =
+        entries.where((e) => e.status == ImportStatus.empty).length;
+    final invalidCount =
+        entries.where((e) => e.status == ImportStatus.invalid).length;
+    final errorCount =
+        entries.where((e) => e.status == ImportStatus.error).length;
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Import summary'),
+          content: SizedBox(
+            width: math.min(MediaQuery.of(context).size.width * 0.6, 520),
+            height: math.min(MediaQuery.of(context).size.height * 0.6, 420),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Success: $successCount • Empty: $emptyCount • Invalid: $invalidCount • Errors: $errorCount',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: Scrollbar(
+                    child: ListView.builder(
+                      itemCount: entries.length,
+                      itemBuilder: (context, index) {
+                        final entry = entries[index];
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            _statusIcon(entry.status),
+                            color: _statusColor(entry.status),
+                          ),
+                          title: Text(
+                            entry.fileName,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(entry.message),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                _statusLabel(entry.status),
+                                style: TextStyle(
+                                  color: _statusColor(entry.status),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (entry.status == ImportStatus.success)
+                                Text(
+                                  '${entry.rows}×${entry.columns}${entry.isReel ? ' · Reel' : ''}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _statusLabel(ImportStatus status) {
+    switch (status) {
+      case ImportStatus.success:
+        return 'Imported';
+      case ImportStatus.empty:
+        return 'Empty';
+      case ImportStatus.invalid:
+        return 'Invalid';
+      case ImportStatus.error:
+        return 'Error';
+    }
+  }
+
+  Color _statusColor(ImportStatus status) {
+    switch (status) {
+      case ImportStatus.success:
+        return Colors.green;
+      case ImportStatus.empty:
+        return Colors.orange;
+      case ImportStatus.invalid:
+        return Colors.deepOrange;
+      case ImportStatus.error:
+        return Colors.red;
+    }
+  }
+
+  IconData _statusIcon(ImportStatus status) {
+    switch (status) {
+      case ImportStatus.success:
+        return Icons.check_circle;
+      case ImportStatus.empty:
+        return Icons.inbox;
+      case ImportStatus.invalid:
+        return Icons.warning;
+      case ImportStatus.error:
+        return Icons.error;
+    }
   }
 
   void _filterRows({List<Map<String, String>>? baseRows}) {
