@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import 'models/imported_dataset.dart';
 import 'models/inventory_transaction.dart';
@@ -101,6 +102,7 @@ class _HomeScreenState extends State<HomeScreen>
   Set<String>? _visibleColumns;
   bool _isImporting = false;
   List<ImportSummaryEntry> _lastImportSummary = [];
+  final Map<String, _DatasetProcessingResult> _datasetProcessingCache = {};
   bool _showMetadataPanel = false;
   final ScrollController _verticalScrollController = ScrollController();
   final ScrollController _horizontalScrollController = ScrollController();
@@ -166,6 +168,8 @@ class _HomeScreenState extends State<HomeScreen>
     final summaries = <ImportSummaryEntry>[];
     final newDatasets = <ImportedDataset>[];
     ImportedDataset? lastImportedDataset;
+    List<ImportSummaryEntry>? summaryToShow;
+    ImportedDataset? datasetToActivate;
     try {
       final files = await FileImportService.pickFiles();
       if (files.isEmpty) {
@@ -238,20 +242,22 @@ class _HomeScreenState extends State<HomeScreen>
               .toList();
           final isReelDataset =
               DatasetClassifierService.isLikelyReelDataset(fileName, rows);
-          rows = DataTransformService.transformRows(
-            rows,
-            dateColumns: dateColumns,
-            columnRenames: isReelDataset
-                ? const {'Sublocation': 'ReelNumber'}
-                : null,
+          final processed = await compute(
+            _processDataset,
+            _DatasetProcessingPayload(
+              rows: rows,
+              dateColumns: dateColumns,
+              isReel: isReelDataset,
+            ),
           );
+          _datasetProcessingCache[fileName] = processed;
 
           // Create dataset
           final dataset = ImportedDataset(
             fileName: fileName,
             importedAt: DateTime.now(),
-            rows: rows,
-            headers: rows.first.keys.toList(),
+            rows: processed.rows,
+            headers: processed.headers,
           );
           newDatasets.add(dataset);
           lastImportedDataset = dataset;
@@ -284,9 +290,7 @@ class _HomeScreenState extends State<HomeScreen>
         setState(() {
           _importedDatasets.addAll(newDatasets);
         });
-        if (lastImportedDataset != null) {
-          _updateActiveDataset(lastImportedDataset!);
-        }
+        datasetToActivate = lastImportedDataset;
       }
 
       await _recomputeDatasetMatchCounts();
@@ -302,8 +306,8 @@ class _HomeScreenState extends State<HomeScreen>
         (entry) => entry.status != ImportStatus.success,
       );
       if (hasIssues || successCount > 0) {
-        _lastImportSummary = List.unmodifiable(summaries);
-        _showImportSummaryDialog(summaries);
+        summaryToShow = List.unmodifiable(summaries);
+        _lastImportSummary = summaryToShow;
       }
     } catch (e) {
       _showErrorDialog('Import Error', 'An unexpected error occurred: $e');
@@ -313,53 +317,51 @@ class _HomeScreenState extends State<HomeScreen>
         _stopLoadingMessages();
       });
     }
+
+    if (datasetToActivate != null && mounted) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) return;
+      _updateActiveDataset(datasetToActivate);
+    }
+    if (summaryToShow != null && mounted) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) return;
+      await _showImportSummaryDialog(summaryToShow);
+    }
   }
 
   void _updateActiveDataset(ImportedDataset dataset) {
-    // Map to domain models (try all types, filter nulls)
-    final products = dataset.rows
-        .map(ModelMapperService.mapToProduct)
-        .whereType<Product>()
-        .toList();
-    final salesOrderLines = dataset.rows
-        .map(ModelMapperService.mapToSalesOrderLine)
-        .whereType<SalesOrderLine>()
-        .toList();
-    final purchaseOrderLines = dataset.rows
-        .map(ModelMapperService.mapToPurchaseOrderLine)
-        .whereType<PurchaseOrderLine>()
-        .toList();
-    final inventoryTransactions = dataset.rows
-        .map(ModelMapperService.mapToInventoryTransaction)
-        .whereType<InventoryTransaction>()
-        .toList();
-
-    // Analyze dataset
-    final analysis =
-        DatasetAnalysisService.analyzeDataset(dataset.rows, dataset.headers);
+    final processed = _datasetProcessingCache[dataset.fileName];
+    if (processed == null) {
+      _showErrorDialog(
+        'Dataset Not Ready',
+        'Processing for ${dataset.fileName} is missing. Please re-import the file.',
+      );
+      return;
+    }
     final baseRows = _globalSearchQuery.isEmpty
-        ? dataset.rows
-        : _filterRowsByQuery(dataset.rows, _globalSearchQuery);
+        ? processed.rows
+        : _filterRowsByQuery(processed.rows, _globalSearchQuery);
     setState(() {
       _activeDataset = dataset;
-      _parsedRows = dataset.rows;
+      _parsedRows = processed.rows;
       _activeGlobalFilteredRows = baseRows;
       _filteredRows = null;
-      _headers = dataset.headers;
+      _headers = processed.headers;
       _fileName = dataset.fileName;
       _searchQuery = '';
       _searchColumn = null;
       _columnSearchController.clear();
-      _products = products;
-      _salesOrderLines = salesOrderLines;
-      _purchaseOrderLines = purchaseOrderLines;
-      _inventoryTransactions = inventoryTransactions;
-      _analysis = analysis;
+      _products = processed.products;
+      _salesOrderLines = processed.salesOrderLines;
+      _purchaseOrderLines = processed.purchaseOrderLines;
+      _inventoryTransactions = processed.inventoryTransactions;
+      _analysis = processed.analysis;
       _visibleColumns = null;
       _columnStatsCache.clear();
       _selectedColumnStats = null;
       _showMetadataPanel = false;
-      _columnWidths = dataset.headers
+      _columnWidths = processed.headers
           .map(
             (header) => math.max<double>(
               _minColumnWidth,
@@ -1173,6 +1175,7 @@ class _HomeScreenState extends State<HomeScreen>
       _isRowCountWarningActive = false;
       _selectedColumnStats = null;
       _columnStatsCache.clear();
+      _datasetProcessingCache.clear();
     });
     _syncRowCountWarningAnimation();
   }
@@ -1490,4 +1493,72 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
   }
+}
+class _DatasetProcessingPayload {
+  final List<Map<String, String>> rows;
+  final List<String> dateColumns;
+  final bool isReel;
+
+  const _DatasetProcessingPayload({
+    required this.rows,
+    required this.dateColumns,
+    required this.isReel,
+  });
+}
+
+class _DatasetProcessingResult {
+  final List<Map<String, String>> rows;
+  final List<String> headers;
+  final DatasetAnalysis analysis;
+  final List<Product> products;
+  final List<SalesOrderLine> salesOrderLines;
+  final List<PurchaseOrderLine> purchaseOrderLines;
+  final List<InventoryTransaction> inventoryTransactions;
+
+  const _DatasetProcessingResult({
+    required this.rows,
+    required this.headers,
+    required this.analysis,
+    required this.products,
+    required this.salesOrderLines,
+    required this.purchaseOrderLines,
+    required this.inventoryTransactions,
+  });
+}
+
+_DatasetProcessingResult _processDataset(_DatasetProcessingPayload payload) {
+  final transformed = DataTransformService.transformRows(
+    payload.rows,
+    dateColumns: payload.dateColumns,
+    columnRenames:
+        payload.isReel ? const {'Sublocation': 'ReelNumber'} : null,
+  );
+  final headers =
+      transformed.isNotEmpty ? transformed.first.keys.toList() : <String>[];
+  final analysis = DatasetAnalysisService.analyzeDataset(transformed, headers);
+  final products = transformed
+      .map(ModelMapperService.mapToProduct)
+      .whereType<Product>()
+      .toList();
+  final salesOrderLines = transformed
+      .map(ModelMapperService.mapToSalesOrderLine)
+      .whereType<SalesOrderLine>()
+      .toList();
+  final purchaseOrderLines = transformed
+      .map(ModelMapperService.mapToPurchaseOrderLine)
+      .whereType<PurchaseOrderLine>()
+      .toList();
+  final inventoryTransactions = transformed
+      .map(ModelMapperService.mapToInventoryTransaction)
+      .whereType<InventoryTransaction>()
+      .toList();
+  return _DatasetProcessingResult(
+    rows: transformed,
+    headers: headers,
+    analysis: analysis,
+    products: products,
+    salesOrderLines: salesOrderLines,
+    purchaseOrderLines: purchaseOrderLines,
+    inventoryTransactions: inventoryTransactions,
+  );
 }
