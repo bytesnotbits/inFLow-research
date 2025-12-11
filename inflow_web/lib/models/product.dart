@@ -17,4 +17,14 @@ class Product {
     required this.vendor,
     required this.uom,
   });
+
+  Map<String, dynamic> toJson() => {
+        'sku': sku,
+        'name': name,
+        'category': category,
+        'isActive': isActive,
+        'defaultUnitPrice': defaultUnitPrice,
+        'vendor': vendor,
+        'uom': uom,
+      };
 }

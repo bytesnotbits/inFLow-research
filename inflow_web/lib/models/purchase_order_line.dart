@@ -19,4 +19,15 @@ class PurchaseOrderLine {
     required this.unitPrice,
     required this.location,
   });
+
+  Map<String, dynamic> toJson() => {
+        'orderNumber': orderNumber,
+        'vendor': vendor,
+        'orderDate': orderDate.toIso8601String(),
+        'productSku': productSku,
+        'productName': productName,
+        'quantity': quantity,
+        'unitPrice': unitPrice,
+        'location': location,
+      };
 }

@@ -1,7 +1,9 @@
-import '../models/product.dart';
-import '../models/sales_order_line.dart';
-import '../models/purchase_order_line.dart';
 import '../models/inventory_transaction.dart';
+import '../models/product.dart';
+import '../models/purchase_order_line.dart';
+import '../models/reorder_setting.dart';
+import '../models/sales_order_line.dart';
+import '../models/stock_level.dart';
 
 class ModelMapperService {
   static Product? mapToProduct(Map<String, String> row) {
@@ -10,8 +12,9 @@ class ModelMapperService {
         sku: row['SKU'] ?? row['ProductSKU'] ?? row['ProductName'] ?? '',
         name: row['ProductName'] ?? row['SKU'] ?? '',
         category: row['Category'] ?? '',
-        isActive: (row['IsActive'] ?? 'True').toLowerCase() == 'true',
-        defaultUnitPrice: double.tryParse(row['DefaultUnitPrice'] ?? row['ProductUnitPrice'] ?? '0') ?? 0,
+        isActive: _parseBool(row['IsActive'], fallback: true),
+        defaultUnitPrice:
+            _parseDouble(row['DefaultUnitPrice'] ?? row['ProductUnitPrice']),
         vendor: row['Vendor'] ?? row['LastVendor'] ?? '',
         uom: row['Uom'] ?? row['ProductQuantityUoM'] ?? '',
       );
@@ -28,8 +31,8 @@ class ModelMapperService {
         orderDate: DateTime.tryParse(row['OrderDate'] ?? '') ?? DateTime(1970),
         productSku: row['ProductSKU'] ?? row['SKU'] ?? row['ProductName'] ?? '',
         productName: row['ProductName'] ?? row['SKU'] ?? '',
-        quantity: double.tryParse(row['ProductQuantity'] ?? row['Quantity'] ?? '0') ?? 0,
-        unitPrice: double.tryParse(row['ProductUnitPrice'] ?? row['UnitPrice'] ?? '0') ?? 0,
+        quantity: _parseDouble(row['ProductQuantity'] ?? row['Quantity']),
+        unitPrice: _parseDouble(row['ProductUnitPrice'] ?? row['UnitPrice']),
         location: row['Location'] ?? '',
       );
     } catch (_) {
@@ -45,8 +48,8 @@ class ModelMapperService {
         orderDate: DateTime.tryParse(row['OrderDate'] ?? '') ?? DateTime(1970),
         productSku: row['ProductSKU'] ?? row['SKU'] ?? row['ProductName'] ?? '',
         productName: row['ProductName'] ?? row['SKU'] ?? '',
-        quantity: double.tryParse(row['ProductQuantity'] ?? row['Quantity'] ?? '0') ?? 0,
-        unitPrice: double.tryParse(row['ProductUnitPrice'] ?? row['UnitPrice'] ?? '0') ?? 0,
+        quantity: _parseDouble(row['ProductQuantity'] ?? row['Quantity']),
+        unitPrice: _parseDouble(row['ProductUnitPrice'] ?? row['UnitPrice']),
         location: row['Location'] ?? '',
       );
     } catch (_) {
@@ -62,12 +65,68 @@ class ModelMapperService {
         location: row['Location'] ?? '',
         sublocation: row['ReelNumber'] ?? row['Sublocation'] ?? '',
         orderNumber: row['OrderNumber'] ?? '',
-        quantity: double.tryParse(row['Quantity'] ?? '0') ?? 0,
-        qtyBefore: double.tryParse(row['QtyBefore'] ?? '0') ?? 0,
-        qtyAfter: double.tryParse(row['QtyAfter'] ?? '0') ?? 0,
+        quantity: _parseDouble(row['Quantity']),
+        qtyBefore: _parseDouble(row['QtyBefore']),
+        qtyAfter: _parseDouble(row['QtyAfter']),
       );
     } catch (_) {
       return null;
     }
+  }
+
+  static StockLevel? mapToStockLevel(Map<String, String> row) {
+    try {
+      return StockLevel(
+        productName: row['ProductName'] ?? '',
+        location: row['Location'] ?? '',
+        sublocation: row['Sublocation'] ?? '',
+        serial: row['Serial'] ?? '',
+        quantity: _parseDouble(row['Quantity']),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static ReorderSetting? mapToReorderSetting(Map<String, String> row) {
+    try {
+      return ReorderSetting(
+        productName: row['ProductName'] ?? '',
+        location: row['Location'] ?? '',
+        defaultSublocation: row['DefaultSublocation'] ?? '',
+        enableReordering: _parseBool(row['EnableReordering']),
+        reorderPoint: _parseDouble(row['ReorderPoint']),
+        reorderQuantity: _parseDouble(row['ReorderQuantity']),
+        reorderMethod: row['ReorderMethod'] ?? '',
+        vendor: row['Vendor'] ?? '',
+        fromLocation: row['FromLocation'] ?? '',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static double _parseDouble(String? value) {
+    if (value == null || value.trim().isEmpty) return 0;
+    return double.tryParse(value.replaceAll(',', '')) ?? 0;
+  }
+
+  static bool _parseBool(String? value, {bool fallback = false}) {
+    if (value == null) return fallback;
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) return fallback;
+    if (normalized == 'true' ||
+        normalized == '1' ||
+        normalized == 'yes' ||
+        normalized == 'y') {
+      return true;
+    }
+    if (normalized == 'false' ||
+        normalized == '0' ||
+        normalized == 'no' ||
+        normalized == 'n') {
+      return false;
+    }
+    return fallback;
   }
 }

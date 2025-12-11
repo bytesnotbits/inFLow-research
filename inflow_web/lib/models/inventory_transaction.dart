@@ -18,4 +18,15 @@ class InventoryTransaction {
     required this.qtyBefore,
     required this.qtyAfter,
   });
+
+  Map<String, dynamic> toJson() => {
+        'transactionType': transactionType,
+        'date': date.toIso8601String(),
+        'location': location,
+        'sublocation': sublocation,
+        'orderNumber': orderNumber,
+        'quantity': quantity,
+        'qtyBefore': qtyBefore,
+        'qtyAfter': qtyAfter,
+      };
 }
