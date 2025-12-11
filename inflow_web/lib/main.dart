@@ -62,6 +62,13 @@ class _HomeScreenState extends State<HomeScreen>
   String _searchQuery = '';
   String? _searchColumn;
   final Map<String, ColumnStats> _columnStatsCache = {};
+  List<Map<String, String>>? _activeGlobalFilteredRows;
+  String _globalSearchQuery = '';
+  final TextEditingController _globalSearchController = TextEditingController();
+  final TextEditingController _columnSearchController = TextEditingController();
+  Timer? _globalSearchDebounce;
+  final Map<String, int> _datasetMatchCounts = {};
+  double _catalogWidthFraction = 0.4;
   bool _isImporting = false;
   bool _showMetadataPanel = false;
   final ScrollController _verticalScrollController = ScrollController();
@@ -104,6 +111,7 @@ class _HomeScreenState extends State<HomeScreen>
         curve: Curves.easeInOut,
       ),
     );
+    _globalSearchController.text = _globalSearchQuery;
   }
 
   @override
@@ -111,6 +119,9 @@ class _HomeScreenState extends State<HomeScreen>
     _verticalScrollController.dispose();
     _horizontalScrollController.dispose();
     _loadingMessageTimer?.cancel();
+    _globalSearchDebounce?.cancel();
+    _globalSearchController.dispose();
+    _columnSearchController.dispose();
     _rowPulseController.dispose();
     super.dispose();
   }
@@ -181,10 +192,12 @@ class _HomeScreenState extends State<HomeScreen>
 
         setState(() {
           _importedDatasets.add(dataset);
-          _activeDataset = dataset;
-          _updateActiveDataset(dataset);
         });
+        _updateActiveDataset(dataset);
       }
+
+      await _recomputeDatasetMatchCounts();
+      _applyGlobalSearchToActiveDataset();
 
       if (_importedDatasets.isNotEmpty) {
         _showSuccessSnackBar(
@@ -222,23 +235,26 @@ class _HomeScreenState extends State<HomeScreen>
     // Analyze dataset
     final analysis =
         DatasetAnalysisService.analyzeDataset(dataset.rows, dataset.headers);
+    final baseRows = _globalSearchQuery.isEmpty
+        ? dataset.rows
+        : _filterRowsByQuery(dataset.rows, _globalSearchQuery);
     setState(() {
+      _activeDataset = dataset;
       _parsedRows = dataset.rows;
-      _filteredRows = dataset.rows;
+      _activeGlobalFilteredRows = baseRows;
+      _filteredRows = null;
       _headers = dataset.headers;
       _fileName = dataset.fileName;
       _searchQuery = '';
       _searchColumn = null;
+      _columnSearchController.clear();
       _products = products;
       _salesOrderLines = salesOrderLines;
       _purchaseOrderLines = purchaseOrderLines;
       _inventoryTransactions = inventoryTransactions;
       _analysis = analysis;
       _columnStatsCache.clear();
-      _selectedColumnStats =
-          _searchColumn != null ? _getColumnStats(_searchColumn!) : null;
-      _isRowCountWarningActive =
-          dataset.rows.length > _rowCountWarningThreshold;
+      _selectedColumnStats = null;
       _showMetadataPanel = false;
       _columnWidths = dataset.headers
           .map(
@@ -249,7 +265,7 @@ class _HomeScreenState extends State<HomeScreen>
           )
           .toList();
     });
-    _syncRowCountWarningAnimation();
+    _filterRows(baseRows: baseRows);
   }
 
   void _showErrorDialog(String title, String message) {
@@ -274,11 +290,21 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  void _filterRows() {
-    if (_parsedRows == null || _searchQuery.isEmpty || _searchColumn == null) {
-      final rowCount = _parsedRows?.length ?? 0;
+  void _filterRows({List<Map<String, String>>? baseRows}) {
+    if (_parsedRows == null) {
       setState(() {
-        _filteredRows = _parsedRows;
+        _filteredRows = null;
+        _selectedColumnStats = null;
+        _isRowCountWarningActive = false;
+      });
+      _syncRowCountWarningAnimation();
+      return;
+    }
+    final rows = baseRows ?? _activeGlobalFilteredRows ?? _parsedRows!;
+    if (_searchQuery.isEmpty || _searchColumn == null) {
+      final rowCount = rows.length;
+      setState(() {
+        _filteredRows = rows;
         _selectedColumnStats =
             _searchColumn != null ? _getColumnStats(_searchColumn!) : null;
         _isRowCountWarningActive =
@@ -287,7 +313,7 @@ class _HomeScreenState extends State<HomeScreen>
       _syncRowCountWarningAnimation();
       return;
     }
-    final filtered = _parsedRows!.where((row) {
+    final filtered = rows.where((row) {
       final value = row[_searchColumn!]?.toLowerCase() ?? '';
       return value.contains(_searchQuery.toLowerCase());
     }).toList();
@@ -381,6 +407,368 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Widget _buildTopControls() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+      child: Row(
+        children: [
+          ElevatedButton(
+            onPressed: _importFiles,
+            child: const Text('Import Files'),
+          ),
+          const SizedBox(width: 8),
+          if (_importedDatasets.isNotEmpty)
+            OutlinedButton(
+              onPressed: _clearAllDatasets,
+              child: const Text('Clear All'),
+            ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: _globalSearchController,
+              enabled: _importedDatasets.isNotEmpty,
+              decoration: InputDecoration(
+                labelText: 'Search across datasets',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _globalSearchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: _clearGlobalSearch,
+                      )
+                    : null,
+              ),
+              onChanged: _onGlobalSearchChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDatasetCard(ImportedDataset dataset) {
+    final matchCount =
+        _datasetMatchCounts[dataset.fileName] ?? dataset.rowCount;
+    final isSelected = _activeDataset?.fileName == dataset.fileName;
+    final isReel = dataset.fileName.toLowerCase().startsWith('reel ');
+    final isLarge = dataset.rowCount > _rowCountWarningThreshold;
+    final matchLabel = _globalSearchQuery.isEmpty
+        ? '${dataset.rowCount} rows'
+        : '$matchCount match${matchCount == 1 ? '' : 'es'}';
+    final columnsLabel = '${dataset.headers.length} columns';
+    return Card(
+      elevation: isSelected ? 4 : 1,
+      color: isSelected ? Colors.blue.shade50 : null,
+      child: InkWell(
+        onTap: () => _updateActiveDataset(dataset),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      dataset.fileName,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (isSelected)
+                    const Icon(Icons.visibility, size: 16, color: Colors.blue),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  Chip(
+                    label: Text(matchLabel),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  Chip(
+                    label: Text(columnsLabel),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  if (isReel)
+                    Chip(
+                      label: const Text('Reel'),
+                      backgroundColor: Colors.orange.shade100,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  if (isLarge)
+                    Chip(
+                      label: const Text('Large'),
+                      backgroundColor: Colors.red.shade100,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Imported ${dataset.importedAt.toLocal().toIso8601String().split('T').first}',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDatasetCatalogPane() {
+    if (_importedDatasets.isEmpty) {
+      return _buildWelcomeContent();
+    }
+    final datasets = _visibleDatasets;
+    if (datasets.isEmpty) {
+      return Center(
+        child: Text(
+          'No datasets contain "$_globalSearchQuery".',
+          style: const TextStyle(fontSize: 16),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+      itemCount: datasets.length,
+      itemBuilder: (context, index) {
+        final dataset = datasets[index];
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4.0),
+          child: _buildDatasetCard(dataset),
+        );
+      },
+    );
+  }
+
+  Widget _buildWelcomeContent() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text(
+            'Welcome! Import your inFlow files to begin.',
+            style: TextStyle(fontSize: 20),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: _importFiles,
+            child: const Text('Import Files'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailPane() {
+    if (_activeDataset == null || _parsedRows == null) {
+      if (_importedDatasets.isEmpty) {
+        return _buildWelcomeContent();
+      }
+      final message = _globalSearchQuery.isNotEmpty &&
+              _visibleDatasets.isEmpty
+          ? 'No datasets contain "$_globalSearchQuery".'
+          : 'Select a dataset card to view its data.';
+      return Center(
+        child: Text(
+          message,
+          style: const TextStyle(fontSize: 16),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        Padding(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  DropdownButton<String>(
+                    hint: const Text('Select column'),
+                    value: _searchColumn,
+                    items: _headers!
+                        .map((h) =>
+                            DropdownMenuItem(value: h, child: Text(h)))
+                        .toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchColumn = value;
+                        _selectedColumnStats = value != null
+                            ? _getColumnStats(value)
+                            : null;
+                      });
+                      _filterRows();
+                    },
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _columnSearchController,
+                      decoration: const InputDecoration(
+                        labelText: 'Search within column',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (value) {
+                        _searchQuery = value;
+                        _filterRows();
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _buildRowCountIndicator(),
+              if (_selectedColumnStats != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Card(
+                    elevation: 2,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Column: $_searchColumn',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold)),
+                          Text('Type: ${_selectedColumnStats!.type}'),
+                          Text(
+                              'Null/Empty Count: ${_selectedColumnStats!.nullCount}'),
+                          Text(
+                              'Unique Value Count: ${_selectedColumnStats!.uniqueCount}'),
+                          Text(
+                              'Sample Values: ${_selectedColumnStats!.sampleValues.join(", ")}'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(child: _buildDataTableArea()),
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(
+                onPressed: () {
+                  if (_filteredRows != null && _headers != null) {
+                    try {
+                      final exportFileName =
+                          _fileName?.replaceFirst(RegExp(r'\.[^.]*$'), '') ??
+                              'export';
+                      CsvExportService.exportToCsv(
+                        _filteredRows!,
+                        _headers!,
+                        '$exportFileName-${DateTime.now().millisecondsSinceEpoch}.csv',
+                      );
+                      _showSuccessSnackBar(
+                          'CSV exported successfully!');
+                    } catch (e) {
+                      _showErrorDialog(
+                          'Export Error', 'Failed to export CSV: $e');
+                    }
+                  } else {
+                    _showErrorDialog(
+                        'Export Error', 'No data available to export.');
+                  }
+                },
+                child: const Text('Export as CSV'),
+              ),
+              ElevatedButton(
+                onPressed: _importFiles,
+                child: const Text('Import More Files'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSplitView() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final totalWidth = constraints.maxWidth;
+        final minCatalogWidth = math.min(240.0, totalWidth * 0.5);
+        final minDetailWidth = math.min(360.0, totalWidth * 0.6);
+        final maxCatalogWidth = math.max(
+          minCatalogWidth,
+          totalWidth - minDetailWidth,
+        );
+        final catalogWidth =
+            (_catalogWidthFraction * totalWidth)
+                .clamp(minCatalogWidth, maxCatalogWidth);
+        final detailWidth = totalWidth - catalogWidth;
+        return Row(
+          children: [
+            SizedBox(
+              width: catalogWidth,
+              child: Card(
+                margin: const EdgeInsets.all(8.0),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                  child: _buildDatasetCatalogPane(),
+                ),
+              ),
+            ),
+            GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onPanUpdate: (details) {
+                final currentWidth = _catalogWidthFraction * totalWidth;
+                final newWidth =
+                    (currentWidth + details.delta.dx).clamp(
+                  minCatalogWidth,
+                  maxCatalogWidth,
+                );
+                setState(() {
+                  _catalogWidthFraction = newWidth / totalWidth;
+                });
+              },
+              child: SizedBox(
+                width: 12,
+                height: double.infinity,
+                child: Center(
+                  child: Container(
+                    width: 2,
+                    height: double.infinity,
+                    color: Colors.grey.shade300,
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(
+              width: detailWidth,
+              child: Card(
+                margin: const EdgeInsets.only(
+                  top: 8,
+                  right: 8,
+                  bottom: 8,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: _buildDetailPane(),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _startLoadingMessages(bool hasLargeFile) {
     _loadingMessageTimer?.cancel();
     _loadingMessageIndex = 0;
@@ -417,6 +805,130 @@ class _HomeScreenState extends State<HomeScreen>
     _loadingMessageTimer = null;
     _loadingMessageIndex = 0;
     _loadingMessage = 'Importing files... please wait';
+  }
+
+  void _onGlobalSearchChanged(String value) {
+    _globalSearchDebounce?.cancel();
+    _globalSearchDebounce =
+        Timer(const Duration(milliseconds: 300), () async {
+      final query = value.trim();
+      if (!mounted) return;
+      setState(() {
+        _globalSearchQuery = query;
+      });
+      await _recomputeDatasetMatchCounts();
+      _applyGlobalSearchToActiveDataset();
+    });
+  }
+
+  void _clearGlobalSearch() {
+    _globalSearchDebounce?.cancel();
+    _globalSearchController.clear();
+    setState(() {
+      _globalSearchQuery = '';
+    });
+    _recomputeDatasetMatchCounts();
+    _applyGlobalSearchToActiveDataset();
+  }
+
+  Future<void> _recomputeDatasetMatchCounts() async {
+    final query = _globalSearchQuery;
+    final updatedMatches = <String, int>{};
+    for (final dataset in _importedDatasets) {
+      updatedMatches[dataset.fileName] = query.isEmpty
+          ? dataset.rowCount
+          : _countMatches(dataset.rows, query);
+    }
+    if (!mounted) return;
+    setState(() {
+      _datasetMatchCounts
+        ..clear()
+        ..addAll(updatedMatches);
+    });
+  }
+
+  int _countMatches(List<Map<String, String>> rows, String query) {
+    if (query.isEmpty) return rows.length;
+    final lowerQuery = query.toLowerCase();
+    var count = 0;
+    for (final row in rows) {
+      if (row.values.any(
+        (value) => value.toLowerCase().contains(lowerQuery),
+      )) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  void _applyGlobalSearchToActiveDataset() {
+    if (_activeDataset == null) {
+      setState(() {
+        _activeGlobalFilteredRows = null;
+      });
+      _filterRows();
+      return;
+    }
+    final baseRows = _globalSearchQuery.isEmpty
+        ? _activeDataset!.rows
+        : _filterRowsByQuery(_activeDataset!.rows, _globalSearchQuery);
+    setState(() {
+      _activeGlobalFilteredRows = baseRows;
+    });
+    _filterRows(baseRows: baseRows);
+  }
+
+  List<Map<String, String>> _filterRowsByQuery(
+    List<Map<String, String>> rows,
+    String query,
+  ) {
+    if (query.isEmpty) return rows;
+    final lowerQuery = query.toLowerCase();
+    return rows.where((row) {
+      return row.values.any(
+        (value) => value.toLowerCase().contains(lowerQuery),
+      );
+    }).toList();
+  }
+
+  List<ImportedDataset> get _visibleDatasets {
+    if (_globalSearchQuery.isEmpty) {
+      return _importedDatasets;
+    }
+    return _importedDatasets
+        .where(
+          (dataset) => (_datasetMatchCounts[dataset.fileName] ?? 0) > 0,
+        )
+        .toList();
+  }
+
+  void _clearAllDatasets() {
+    setState(() {
+      _parsedRows = null;
+      _filteredRows = null;
+      _headers = null;
+      _fileName = null;
+      _searchQuery = '';
+      _searchColumn = null;
+      _products = null;
+      _salesOrderLines = null;
+      _purchaseOrderLines = null;
+      _inventoryTransactions = null;
+      _analysis = null;
+      _importedDatasets = [];
+      _activeDataset = null;
+      _showMetadataPanel = false;
+      _columnWidths = [];
+      _activeGlobalFilteredRows = null;
+      _datasetMatchCounts.clear();
+      _globalSearchQuery = '';
+      _globalSearchController.clear();
+      _columnSearchController.clear();
+      _isRowCountWarningActive = false;
+      _selectedColumnStats = null;
+      _columnStatsCache.clear();
+    });
+    _syncRowCountWarningAnimation();
   }
 
   Widget _buildDataTableRow({
@@ -509,6 +1021,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final hasDatasets = _importedDatasets.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
         title: const Text('inFlow Inventory Research'),
@@ -516,188 +1029,17 @@ class _HomeScreenState extends State<HomeScreen>
       body: Stack(
         clipBehavior: Clip.none,
         children: [
-          Center(
-            child: _parsedRows == null
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'Welcome! Import your inFlow files to begin.',
-                        style: TextStyle(fontSize: 20),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: _importFiles,
-                        child: const Text('Import Files'),
-                      ),
-                      if (_importedDatasets.isNotEmpty) ...[
-                        const SizedBox(height: 24),
-                        Text('${_importedDatasets.length} file(s) imported',
-                            style: const TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 300,
-                          width: 400,
-                          child: ListView.builder(
-                            itemCount: _importedDatasets.length,
-                            itemBuilder: (context, index) {
-                              final dataset = _importedDatasets[index];
-                              return Card(
-                                child: ListTile(
-                                  title: Text(dataset.fileName),
-                                  subtitle: Text(
-                                      '${dataset.rowCount} rows · ${dataset.headers.length} columns'),
-                                  onTap: () => _updateActiveDataset(dataset),
-                                  selected: _activeDataset == dataset,
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ],
-                  )
-                : Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8.0, vertical: 4.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                DropdownButton<String>(
-                                  hint: const Text('Select column'),
-                                  value: _searchColumn,
-                                  items: _headers!
-                                      .map((h) => DropdownMenuItem(
-                                          value: h, child: Text(h)))
-                                      .toList(),
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _searchColumn = value;
-                                      _selectedColumnStats = value != null
-                                          ? _getColumnStats(value)
-                                          : null;
-                                    });
-                                    _filterRows();
-                                  },
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: TextField(
-                                    decoration: const InputDecoration(
-                                      labelText: 'Search',
-                                      border: OutlineInputBorder(),
-                                      isDense: true,
-                                    ),
-                                    onChanged: (value) {
-                                      _searchQuery = value;
-                                      _filterRows();
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            _buildRowCountIndicator(),
-                            if (_selectedColumnStats != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8.0),
-                                child: Card(
-                                  elevation: 2,
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Column: $_searchColumn',
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.bold)),
-                                        Text(
-                                            'Type: ${_selectedColumnStats!.type}'),
-                                        Text(
-                                            'Null/Empty Count: ${_selectedColumnStats!.nullCount}'),
-                                        Text(
-                                            'Unique Value Count: ${_selectedColumnStats!.uniqueCount}'),
-                                        Text(
-                                            'Sample Values: ${_selectedColumnStats!.sampleValues.join(", ")}'),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      Expanded(child: _buildDataTableArea()),
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            ElevatedButton(
-                              onPressed: () {
-                                if (_filteredRows != null && _headers != null) {
-                                  try {
-                                    final exportFileName =
-                                        _fileName?.replaceFirst(
-                                                RegExp(r'\.[^.]*$'), '') ??
-                                            'export';
-                                    CsvExportService.exportToCsv(
-                                      _filteredRows!,
-                                      _headers!,
-                                      '$exportFileName-${DateTime.now().millisecondsSinceEpoch}.csv',
-                                    );
-                                    _showSuccessSnackBar(
-                                        'CSV exported successfully!');
-                                  } catch (e) {
-                                    _showErrorDialog('Export Error',
-                                        'Failed to export CSV: $e');
-                                  }
-                                } else {
-                                  _showErrorDialog('Export Error',
-                                      'No data available to export.');
-                                }
-                              },
-                              child: const Text('Export as CSV'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  _parsedRows = null;
-                                  _filteredRows = null;
-                                  _headers = null;
-                                  _fileName = null;
-                                  _searchQuery = '';
-                                  _searchColumn = null;
-                                  _products = null;
-                                  _salesOrderLines = null;
-                                  _purchaseOrderLines = null;
-                                  _inventoryTransactions = null;
-                                  _analysis = null;
-                                  _importedDatasets = [];
-                                  _activeDataset = null;
-                                  _showMetadataPanel = false;
-                                  _columnWidths = [];
-                                });
-                              },
-                              child: const Text('Clear All'),
-                            ),
-                            ElevatedButton(
-                              onPressed: _importFiles,
-                              child: const Text('Import More Files'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+          Column(
+            children: [
+              _buildTopControls(),
+              Expanded(
+                child: hasDatasets
+                    ? _buildSplitView()
+                    : _buildWelcomeContent(),
+              ),
+            ],
           ),
-          if (_parsedRows != null)
+          if (_activeDataset != null && _parsedRows != null)
             Positioned(
               top: 16,
               right: 16,
