@@ -204,10 +204,11 @@ class _HomeScreenState extends State<HomeScreen>
         );
       }
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isInitialLoad = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isInitialLoad = false;
+        });
+      }
       _stopInitialLoadMessages();
       _dismissInitialLoadSnackBar();
     }
@@ -1183,7 +1184,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _dismissInitialLoadSnackBar() {
-    _initialLoadSnackBar?..close();
+    _initialLoadSnackBar?.close();
     _initialLoadSnackBar = null;
   }
 
