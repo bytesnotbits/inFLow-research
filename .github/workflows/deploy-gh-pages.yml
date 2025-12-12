@@ -49,7 +49,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Flutter web bundle
-        run: flutter build web --release --base-href "$BASE_HREF" --web-renderer html
+        run: flutter build web --release --base-href "$BASE_HREF"
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
