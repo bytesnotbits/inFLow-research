@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 
@@ -13,7 +11,8 @@ class CsvParserService {
   }
 
   /// Parses a CSV file on a background isolate to avoid blocking the UI.
-  static Future<List<Map<String, String>>> parseCsvAsync(PlatformFile file) async {
+  static Future<List<Map<String, String>>> parseCsvAsync(
+      PlatformFile file) async {
     final bytes = file.bytes;
     if (bytes == null) return [];
     return compute(CsvUtils.parseBytes, bytes);

@@ -13,6 +13,16 @@ class StockLevel {
     required this.quantity,
   });
 
+  factory StockLevel.fromJson(Map<String, dynamic> json) {
+    return StockLevel(
+      productName: json['productName'] as String? ?? '',
+      location: json['location'] as String? ?? '',
+      sublocation: json['sublocation'] as String? ?? '',
+      serial: json['serial'] as String? ?? '',
+      quantity: (json['quantity'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'productName': productName,
         'location': location,

@@ -10,7 +10,8 @@ class DataTransformService {
         return date.toIso8601String().replaceFirst('T', ' ').split('.').first;
       }
       // Try MM/DD/YYYY HH:mm:ss AM/PM
-      final usFormat = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4}) (\d{1,2}):(\d{2}):(\d{2}) (AM|PM)');
+      final usFormat = RegExp(
+          r'^(\d{1,2})/(\d{1,2})/(\d{4}) (\d{1,2}):(\d{2}):(\d{2}) (AM|PM)');
       final match = usFormat.firstMatch(dateStr);
       if (match != null) {
         int month = int.parse(match.group(1)!);

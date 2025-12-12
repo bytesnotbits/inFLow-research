@@ -1,15 +1,17 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import 'models/imported_dataset.dart';
 import 'models/inventory_transaction.dart';
+import 'models/normalized_database.dart';
 import 'models/product.dart';
 import 'models/purchase_order_line.dart';
+import 'models/reorder_setting.dart';
 import 'models/sales_order_line.dart';
+import 'models/stock_level.dart';
 import 'services/column_inspector_service.dart';
 import 'services/csv_export_service.dart';
 import 'services/csv_parser_service.dart';
@@ -18,6 +20,7 @@ import 'services/dataset_classifier_service.dart';
 import 'services/dataset_analysis_service.dart';
 import 'services/file_import_service.dart';
 import 'services/model_mapper_service.dart';
+import 'services/normalized_database_service.dart';
 import 'services/validation_service.dart';
 
 void main() {
@@ -101,7 +104,6 @@ class _HomeScreenState extends State<HomeScreen>
   double _catalogWidthFraction = 0.4;
   Set<String>? _visibleColumns;
   bool _isImporting = false;
-  List<ImportSummaryEntry> _lastImportSummary = [];
   final Map<String, _DatasetProcessingResult> _datasetProcessingCache = {};
   bool _showMetadataPanel = false;
   final ScrollController _verticalScrollController = ScrollController();
@@ -127,6 +129,7 @@ class _HomeScreenState extends State<HomeScreen>
   // Multi-file support
   List<ImportedDataset> _importedDatasets = [];
   ImportedDataset? _activeDataset;
+  NormalizedDatabase? _normalizedDatabase;
 
   @override
   void initState() {
@@ -145,6 +148,9 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
     _globalSearchController.text = _globalSearchQuery;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _tryLoadNormalizedDatabase();
+    });
   }
 
   @override
@@ -157,6 +163,45 @@ class _HomeScreenState extends State<HomeScreen>
     _columnSearchController.dispose();
     _rowPulseController.dispose();
     super.dispose();
+  }
+
+  Future<void> _tryLoadNormalizedDatabase() async {
+    if (_normalizedDatabase != null) return;
+    final normalized = await const NormalizedDatabaseService().load();
+    if (!mounted || normalized == null) return;
+    _ingestNormalizedDatabase(normalized);
+  }
+
+  void _ingestNormalizedDatabase(NormalizedDatabase normalized) {
+    final bundles = _buildNormalizedDatasetBundles(normalized);
+    final newBundles = bundles
+        .where(
+          (bundle) =>
+              !_datasetProcessingCache.containsKey(bundle.dataset.fileName),
+        )
+        .toList();
+    if (newBundles.isEmpty) {
+      setState(() {
+        _normalizedDatabase = normalized;
+      });
+      return;
+    }
+    setState(() {
+      _normalizedDatabase = normalized;
+      _importedDatasets = [
+        ..._importedDatasets,
+        ...newBundles.map((bundle) => bundle.dataset),
+      ];
+      for (final bundle in newBundles) {
+        _datasetProcessingCache[bundle.dataset.fileName] = bundle.result;
+      }
+    });
+    if (_activeDataset == null && newBundles.isNotEmpty) {
+      _updateActiveDataset(newBundles.first.dataset);
+    }
+    _showSuccessSnackBar(
+      'Loaded ${newBundles.length} normalized dataset${newBundles.length == 1 ? '' : 's'}.',
+    );
   }
 
   Future<void> _importFiles() async {
@@ -178,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
       final hasLargeFile = files.any(
-        (file) => (file.size ?? 0) > _largeFileThresholdBytes,
+        (file) => file.size > _largeFileThresholdBytes,
       );
       _startLoadingMessages(hasLargeFile);
 
@@ -237,9 +282,8 @@ class _HomeScreenState extends State<HomeScreen>
           }
 
           // Guess common date columns
-          final dateColumns = headers
-              .where((k) => k.toLowerCase().contains('date'))
-              .toList();
+          final dateColumns =
+              headers.where((k) => k.toLowerCase().contains('date')).toList();
           final isReelDataset =
               DatasetClassifierService.isLikelyReelDataset(fileName, rows);
           final processed = await compute(
@@ -307,7 +351,6 @@ class _HomeScreenState extends State<HomeScreen>
       );
       if (hasIssues || successCount > 0) {
         summaryToShow = List.unmodifiable(summaries);
-        _lastImportSummary = summaryToShow;
       }
     } catch (e) {
       _showErrorDialog('Import Error', 'An unexpected error occurred: $e');
@@ -533,8 +576,7 @@ class _HomeScreenState extends State<HomeScreen>
         _filteredRows = rows;
         _selectedColumnStats =
             _searchColumn != null ? _getColumnStats(_searchColumn!) : null;
-        _isRowCountWarningActive =
-            rowCount > _rowCountWarningThreshold;
+        _isRowCountWarningActive = rowCount > _rowCountWarningThreshold;
       });
       _syncRowCountWarningAnimation();
       return;
@@ -548,8 +590,7 @@ class _HomeScreenState extends State<HomeScreen>
       _filteredRows = filtered;
       _selectedColumnStats =
           _searchColumn != null ? _getColumnStats(_searchColumn!) : null;
-      _isRowCountWarningActive =
-          rowCount > _rowCountWarningThreshold;
+      _isRowCountWarningActive = rowCount > _rowCountWarningThreshold;
     });
     _syncRowCountWarningAnimation();
   }
@@ -567,7 +608,9 @@ class _HomeScreenState extends State<HomeScreen>
   List<String> get _displayedHeaders {
     if (_headers == null) return [];
     if (_visibleColumns == null) return _headers!;
-    return _headers!.where((header) => _visibleColumns!.contains(header)).toList();
+    return _headers!
+        .where((header) => _visibleColumns!.contains(header))
+        .toList();
   }
 
   double _getColumnWidth(String header) {
@@ -814,8 +857,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (_importedDatasets.isEmpty) {
         return _buildWelcomeContent();
       }
-      final message = _globalSearchQuery.isNotEmpty &&
-              _visibleDatasets.isEmpty
+      final message = _globalSearchQuery.isNotEmpty && _visibleDatasets.isEmpty
           ? 'No datasets contain "$_globalSearchQuery".'
           : 'Select a dataset card to view its data.';
       return Center(
@@ -828,8 +870,7 @@ class _HomeScreenState extends State<HomeScreen>
     return Column(
       children: [
         Padding(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -839,15 +880,13 @@ class _HomeScreenState extends State<HomeScreen>
                     hint: const Text('Select column'),
                     value: _searchColumn,
                     items: _displayedHeaders
-                        .map((h) =>
-                            DropdownMenuItem(value: h, child: Text(h)))
+                        .map((h) => DropdownMenuItem(value: h, child: Text(h)))
                         .toList(),
                     onChanged: (value) {
                       setState(() {
                         _searchColumn = value;
-                        _selectedColumnStats = value != null
-                            ? _getColumnStats(value)
-                            : null;
+                        _selectedColumnStats =
+                            value != null ? _getColumnStats(value) : null;
                       });
                       _filterRows();
                     },
@@ -887,8 +926,8 @@ class _HomeScreenState extends State<HomeScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text('Column: $_searchColumn',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold)),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
                           Text('Type: ${_selectedColumnStats!.type}'),
                           Text(
                               'Null/Empty Count: ${_selectedColumnStats!.nullCount}'),
@@ -911,19 +950,20 @@ class _HomeScreenState extends State<HomeScreen>
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   if (_filteredRows != null && _headers != null) {
                     try {
                       final exportFileName =
                           _fileName?.replaceFirst(RegExp(r'\.[^.]*$'), '') ??
                               'export';
-                      CsvExportService.exportToCsv(
+                      final exported = await CsvExportService.exportToCsv(
                         _filteredRows!,
                         _headers!,
                         '$exportFileName-${DateTime.now().millisecondsSinceEpoch}.csv',
                       );
-                      _showSuccessSnackBar(
-                          'CSV exported successfully!');
+                      if (exported) {
+                        _showSuccessSnackBar('CSV exported successfully!');
+                      }
                     } catch (e) {
                       _showErrorDialog(
                           'Export Error', 'Failed to export CSV: $e');
@@ -956,9 +996,8 @@ class _HomeScreenState extends State<HomeScreen>
           minCatalogWidth,
           totalWidth - minDetailWidth,
         );
-        final catalogWidth =
-            (_catalogWidthFraction * totalWidth)
-                .clamp(minCatalogWidth, maxCatalogWidth);
+        final catalogWidth = (_catalogWidthFraction * totalWidth)
+            .clamp(minCatalogWidth, maxCatalogWidth);
         final detailWidth = totalWidth - catalogWidth;
         return Row(
           children: [
@@ -976,8 +1015,7 @@ class _HomeScreenState extends State<HomeScreen>
               behavior: HitTestBehavior.translucent,
               onPanUpdate: (details) {
                 final currentWidth = _catalogWidthFraction * totalWidth;
-                final newWidth =
-                    (currentWidth + details.delta.dx).clamp(
+                final newWidth = (currentWidth + details.delta.dx).clamp(
                   minCatalogWidth,
                   maxCatalogWidth,
                 );
@@ -1057,8 +1095,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _onGlobalSearchChanged(String value) {
     _globalSearchDebounce?.cancel();
-    _globalSearchDebounce =
-        Timer(const Duration(milliseconds: 300), () async {
+    _globalSearchDebounce = Timer(const Duration(milliseconds: 300), () async {
       final query = value.trim();
       if (!mounted) return;
       setState(() {
@@ -1083,9 +1120,8 @@ class _HomeScreenState extends State<HomeScreen>
     final query = _globalSearchQuery;
     final updatedMatches = <String, int>{};
     for (final dataset in _importedDatasets) {
-      updatedMatches[dataset.fileName] = query.isEmpty
-          ? dataset.rowCount
-          : _countMatches(dataset.rows, query);
+      updatedMatches[dataset.fileName] =
+          query.isEmpty ? dataset.rowCount : _countMatches(dataset.rows, query);
     }
     if (!mounted) return;
     setState(() {
@@ -1399,6 +1435,191 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  List<_NormalizedDatasetBundle> _buildNormalizedDatasetBundles(
+    NormalizedDatabase normalized,
+  ) {
+    final bundles = <_NormalizedDatasetBundle>[];
+
+    void addBundle<T>({
+      required String label,
+      required List<NormalizedRecord<T>> records,
+      required _DatasetProcessingResult Function(
+        List<Map<String, String>> rows,
+        List<String> headers,
+        DatasetAnalysis analysis,
+        List<T> values,
+      ) buildResult,
+    }) {
+      final bundle = _createNormalizedDatasetBundle<T>(
+        label: label,
+        generatedAt: normalized.generatedAt,
+        records: records,
+        buildResult: buildResult,
+      );
+      if (bundle != null) {
+        bundles.add(bundle);
+      }
+    }
+
+    addBundle<Product>(
+      label: 'Normalized Products',
+      records: normalized.products,
+      buildResult: (rows, headers, analysis, values) =>
+          _DatasetProcessingResult(
+        rows: rows,
+        headers: headers,
+        analysis: analysis,
+        products: values,
+        salesOrderLines: const [],
+        purchaseOrderLines: const [],
+        inventoryTransactions: const [],
+      ),
+    );
+
+    addBundle<SalesOrderLine>(
+      label: 'Normalized Sales Orders',
+      records: normalized.salesOrderLines,
+      buildResult: (rows, headers, analysis, values) =>
+          _DatasetProcessingResult(
+        rows: rows,
+        headers: headers,
+        analysis: analysis,
+        products: const [],
+        salesOrderLines: values,
+        purchaseOrderLines: const [],
+        inventoryTransactions: const [],
+      ),
+    );
+
+    addBundle<PurchaseOrderLine>(
+      label: 'Normalized Purchase Orders',
+      records: normalized.purchaseOrderLines,
+      buildResult: (rows, headers, analysis, values) =>
+          _DatasetProcessingResult(
+        rows: rows,
+        headers: headers,
+        analysis: analysis,
+        products: const [],
+        salesOrderLines: const [],
+        purchaseOrderLines: values,
+        inventoryTransactions: const [],
+      ),
+    );
+
+    addBundle<InventoryTransaction>(
+      label: 'Normalized Inventory Transactions',
+      records: normalized.inventoryTransactions,
+      buildResult: (rows, headers, analysis, values) =>
+          _DatasetProcessingResult(
+        rows: rows,
+        headers: headers,
+        analysis: analysis,
+        products: const [],
+        salesOrderLines: const [],
+        purchaseOrderLines: const [],
+        inventoryTransactions: values,
+      ),
+    );
+
+    addBundle<StockLevel>(
+      label: 'Normalized Stock Levels',
+      records: normalized.stockLevels,
+      buildResult: (rows, headers, analysis, values) =>
+          _DatasetProcessingResult(
+        rows: rows,
+        headers: headers,
+        analysis: analysis,
+        products: const [],
+        salesOrderLines: const [],
+        purchaseOrderLines: const [],
+        inventoryTransactions: const [],
+      ),
+    );
+
+    addBundle<ReorderSetting>(
+      label: 'Normalized Reorder Settings',
+      records: normalized.reorderSettings,
+      buildResult: (rows, headers, analysis, values) =>
+          _DatasetProcessingResult(
+        rows: rows,
+        headers: headers,
+        analysis: analysis,
+        products: const [],
+        salesOrderLines: const [],
+        purchaseOrderLines: const [],
+        inventoryTransactions: const [],
+      ),
+    );
+
+    return bundles;
+  }
+
+  _NormalizedDatasetBundle? _createNormalizedDatasetBundle<T>({
+    required String label,
+    required DateTime generatedAt,
+    required List<NormalizedRecord<T>> records,
+    required _DatasetProcessingResult Function(
+      List<Map<String, String>> rows,
+      List<String> headers,
+      DatasetAnalysis analysis,
+      List<T> values,
+    ) buildResult,
+  }) {
+    if (records.isEmpty) return null;
+    final rows = _normalizedRecordsToRows(records);
+    if (rows.isEmpty) return null;
+    final headers = rows.first.keys.toList();
+    final analysis = DatasetAnalysisService.analyzeDataset(rows, headers);
+    final dataset = ImportedDataset(
+      fileName: label,
+      importedAt: generatedAt,
+      rows: rows,
+      headers: headers,
+    );
+    final values = records.map((record) => record.record).toList();
+    final result = buildResult(rows, headers, analysis, values);
+    return _NormalizedDatasetBundle(
+      dataset: dataset,
+      result: result,
+    );
+  }
+
+  List<Map<String, String>> _normalizedRecordsToRows<T>(
+    List<NormalizedRecord<T>> records,
+  ) {
+    final rows = <Map<String, String>>[];
+    for (final normalized in records) {
+      final row = <String, String>{
+        'sourceFile': normalized.sourceFile,
+        'sourceRow': normalized.sourceRow.toString(),
+      };
+      try {
+        final dynamic payload = normalized.record;
+        final dynamic jsonMap = (payload as dynamic).toJson();
+        if (jsonMap is Map) {
+          jsonMap.forEach((key, value) {
+            row[key.toString()] = _stringifyValue(value);
+          });
+        }
+      } catch (_) {
+        // ignore — fall back to source fields only
+      }
+      rows.add(row);
+    }
+    return rows;
+  }
+
+  String _stringifyValue(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value;
+    if (value is DateTime) return value.toIso8601String();
+    if (value is num || value is bool) return value.toString();
+    if (value is Iterable) {
+      return value.map(_stringifyValue).join(', ');
+    }
+    return value.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasDatasets = _importedDatasets.isNotEmpty;
@@ -1413,9 +1634,7 @@ class _HomeScreenState extends State<HomeScreen>
             children: [
               _buildTopControls(),
               Expanded(
-                child: hasDatasets
-                    ? _buildSplitView()
-                    : _buildWelcomeContent(),
+                child: hasDatasets ? _buildSplitView() : _buildWelcomeContent(),
               ),
             ],
           ),
@@ -1494,6 +1713,17 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 }
+
+class _NormalizedDatasetBundle {
+  final ImportedDataset dataset;
+  final _DatasetProcessingResult result;
+
+  const _NormalizedDatasetBundle({
+    required this.dataset,
+    required this.result,
+  });
+}
+
 class _DatasetProcessingPayload {
   final List<Map<String, String>> rows;
   final List<String> dateColumns;
@@ -1530,8 +1760,7 @@ _DatasetProcessingResult _processDataset(_DatasetProcessingPayload payload) {
   final transformed = DataTransformService.transformRows(
     payload.rows,
     dateColumns: payload.dateColumns,
-    columnRenames:
-        payload.isReel ? const {'Sublocation': 'ReelNumber'} : null,
+    columnRenames: payload.isReel ? const {'Sublocation': 'ReelNumber'} : null,
   );
   final headers =
       transformed.isNotEmpty ? transformed.first.keys.toList() : <String>[];

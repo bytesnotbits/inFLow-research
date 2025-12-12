@@ -1,5 +1,6 @@
 class ColumnInspectorService {
-  static Map<String, ColumnStats> inspectColumns(List<Map<String, String>> rows, List<String> headers) {
+  static Map<String, ColumnStats> inspectColumns(
+      List<Map<String, String>> rows, List<String> headers) {
     final stats = <String, ColumnStats>{};
     for (final header in headers) {
       stats[header] = inspectColumn(rows, header);
@@ -7,7 +8,8 @@ class ColumnInspectorService {
     return stats;
   }
 
-  static ColumnStats inspectColumn(List<Map<String, String>> rows, String header) {
+  static ColumnStats inspectColumn(
+      List<Map<String, String>> rows, String header) {
     final values = rows.map((row) => row[header]).toList();
     return ColumnStats.fromValues(values);
   }
@@ -28,10 +30,10 @@ class ColumnStats {
 
   factory ColumnStats.fromValues(List<String?> values) {
     final nonNullValues = values
-    .whereType<String>()
-    .map((v) => v.trim())
-    .where((v) => v.isNotEmpty)
-    .toList();
+        .whereType<String>()
+        .map((v) => v.trim())
+        .where((v) => v.isNotEmpty)
+        .toList();
     final nullCount = values.length - nonNullValues.length;
     final uniqueCount = nonNullValues.toSet().length;
     final sampleValues = nonNullValues.take(5).toList();

@@ -11,7 +11,8 @@ class ValidationService {
     if (!supportedExtensions.contains(extension)) {
       return ValidationResult(
         isValid: false,
-        message: 'Unsupported file format: .$extension. Supported formats: ${supportedExtensions.join(', ')}',
+        message:
+            'Unsupported file format: .$extension. Supported formats: ${supportedExtensions.join(', ')}',
       );
     }
 
@@ -26,13 +27,16 @@ class ValidationService {
     return ValidationResult(isValid: true, message: 'File is valid.');
   }
 
-  static ValidationResult validateCsvData(List<Map<String, String>> rows, List<String> headers) {
+  static ValidationResult validateCsvData(
+      List<Map<String, String>> rows, List<String> headers) {
     if (rows.isEmpty) {
-      return ValidationResult(isValid: false, message: 'CSV file contains no data rows.');
+      return ValidationResult(
+          isValid: false, message: 'CSV file contains no data rows.');
     }
 
     if (headers.isEmpty) {
-      return ValidationResult(isValid: false, message: 'CSV file contains no headers.');
+      return ValidationResult(
+          isValid: false, message: 'CSV file contains no headers.');
     }
 
     return ValidationResult(isValid: true, message: 'CSV data is valid.');

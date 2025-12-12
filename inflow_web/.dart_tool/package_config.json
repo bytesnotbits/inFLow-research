@@ -92,6 +92,12 @@
       "languageVersion": "3.2"
     },
     {
+      "name": "flutter_lints",
+      "rootUri": "file:///home/codespace/.pub-cache/hosted/pub.dev/flutter_lints-3.0.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.1"
+    },
+    {
       "name": "flutter_plugin_android_lifecycle",
       "rootUri": "file:///home/codespace/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.19",
       "packageUri": "lib/",
@@ -116,10 +122,10 @@
       "languageVersion": "2.12"
     },
     {
-      "name": "lint",
-      "rootUri": "file:///home/codespace/.pub-cache/hosted/pub.dev/lint-2.3.0",
+      "name": "lints",
+      "rootUri": "file:///home/codespace/.pub-cache/hosted/pub.dev/lints-3.0.0",
       "packageUri": "lib/",
-      "languageVersion": "3.2"
+      "languageVersion": "3.0"
     },
     {
       "name": "matcher",
@@ -260,7 +266,7 @@
       "languageVersion": "3.0"
     }
   ],
-  "generated": "2025-12-10T18:54:24.629403Z",
+  "generated": "2025-12-12T15:57:43.302116Z",
   "generator": "pub",
   "generatorVersion": "3.2.6"
 }

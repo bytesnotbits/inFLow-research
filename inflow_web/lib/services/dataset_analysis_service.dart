@@ -1,5 +1,6 @@
 class DatasetAnalysisService {
-  static DatasetAnalysis analyzeDataset(List<Map<String, String>> rows, List<String> headers) {
+  static DatasetAnalysis analyzeDataset(
+      List<Map<String, String>> rows, List<String> headers) {
     final rowCount = rows.length;
     final columnCount = headers.length;
     final dateRanges = _extractDateRanges(rows, headers);
@@ -11,7 +12,8 @@ class DatasetAnalysisService {
     );
   }
 
-  static Map<String, DateRange> _extractDateRanges(List<Map<String, String>> rows, List<String> headers) {
+  static Map<String, DateRange> _extractDateRanges(
+      List<Map<String, String>> rows, List<String> headers) {
     final dateRanges = <String, DateRange>{};
     for (final header in headers) {
       if (!header.toLowerCase().contains('date')) continue;
@@ -21,8 +23,15 @@ class DatasetAnalysisService {
       for (final row in rows) {
         final date = DateTime.tryParse(row[header] ?? '');
         if (date == null) continue;
-        earliest = earliest == null || date.isBefore(earliest!) ? date : earliest;
-        latest = latest == null || date.isAfter(latest!) ? date : latest;
+        final currentEarliest = earliest;
+        if (currentEarliest == null || date.isBefore(currentEarliest)) {
+          earliest = date;
+        }
+
+        final currentLatest = latest;
+        if (currentLatest == null || date.isAfter(currentLatest)) {
+          latest = date;
+        }
         count++;
       }
       if (earliest != null && latest != null) {
@@ -60,5 +69,6 @@ class DateRange {
     required this.count,
   });
 
-  String get range => '${earliest.toIso8601String().split('T').first} to ${latest.toIso8601String().split('T').first}';
+  String get range =>
+      '${earliest.toIso8601String().split('T').first} to ${latest.toIso8601String().split('T').first}';
 }

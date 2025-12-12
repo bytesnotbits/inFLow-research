@@ -19,6 +19,19 @@ class InventoryTransaction {
     required this.qtyAfter,
   });
 
+  factory InventoryTransaction.fromJson(Map<String, dynamic> json) {
+    return InventoryTransaction(
+      transactionType: json['transactionType'] as String? ?? '',
+      date: DateTime.tryParse(json['date'] as String? ?? '') ?? DateTime(1970),
+      location: json['location'] as String? ?? '',
+      sublocation: json['sublocation'] as String? ?? '',
+      orderNumber: json['orderNumber'] as String? ?? '',
+      quantity: (json['quantity'] as num?)?.toDouble() ?? 0,
+      qtyBefore: (json['qtyBefore'] as num?)?.toDouble() ?? 0,
+      qtyAfter: (json['qtyAfter'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'transactionType': transactionType,
         'date': date.toIso8601String(),

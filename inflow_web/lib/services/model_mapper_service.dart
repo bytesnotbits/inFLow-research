@@ -31,6 +31,8 @@ class ModelMapperService {
         orderDate: DateTime.tryParse(row['OrderDate'] ?? '') ?? DateTime(1970),
         productSku: row['ProductSKU'] ?? row['SKU'] ?? row['ProductName'] ?? '',
         productName: row['ProductName'] ?? row['SKU'] ?? '',
+        productDescription:
+            row['ProductDescription'] ?? row['Description'] ?? '',
         quantity: _parseDouble(row['ProductQuantity'] ?? row['Quantity']),
         unitPrice: _parseDouble(row['ProductUnitPrice'] ?? row['UnitPrice']),
         location: row['Location'] ?? '',
@@ -57,7 +59,8 @@ class ModelMapperService {
     }
   }
 
-  static InventoryTransaction? mapToInventoryTransaction(Map<String, String> row) {
+  static InventoryTransaction? mapToInventoryTransaction(
+      Map<String, String> row) {
     try {
       return InventoryTransaction(
         transactionType: row['TransactionType'] ?? '',

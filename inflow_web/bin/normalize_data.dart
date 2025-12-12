@@ -13,12 +13,22 @@ import 'package:inflow_web/utils/csv_utils.dart';
 Future<void> main(List<String> args) async {
   final builder = NormalizedDatabaseBuilder(
     sourceDir: _resolveProjectDirectory('inflow_web/db/original_exports'),
-    outputDir: _resolveProjectDirectory('inflow_web/db/normalized'),
+    outputDir: _resolveProjectDirectory(
+      'inflow_web/db/normalized',
+      createIfMissing: true,
+    ),
+    assetDir: _resolveProjectDirectory(
+      'inflow_web/assets/normalized',
+      createIfMissing: true,
+    ),
   );
   await builder.build();
 }
 
-Directory _resolveProjectDirectory(String relativePath) {
+Directory _resolveProjectDirectory(
+  String relativePath, {
+  bool createIfMissing = false,
+}) {
   final current = Directory.current;
   final direct = Directory('${current.path}/$relativePath');
   if (direct.existsSync()) {
@@ -27,6 +37,11 @@ Directory _resolveProjectDirectory(String relativePath) {
   final parent = Directory('${current.parent.path}/$relativePath');
   if (parent.existsSync()) {
     return parent;
+  }
+  if (createIfMissing) {
+    final target = Directory('${current.path}/$relativePath')
+      ..createSync(recursive: true);
+    return target;
   }
   throw FileSystemException(
     'Unable to find $relativePath from ${current.path}',
@@ -40,10 +55,13 @@ class NormalizedDatabaseBuilder {
   NormalizedDatabaseBuilder({
     required this.sourceDir,
     required Directory outputDir,
-  }) : outputDir = outputDir..createSync(recursive: true);
+    required Directory assetDir,
+  })  : outputDir = outputDir..createSync(recursive: true),
+        assetDir = assetDir..createSync(recursive: true);
 
   final Directory sourceDir;
   final Directory outputDir;
+  final Directory assetDir;
 
   Future<void> build() async {
     if (!sourceDir.existsSync()) {
@@ -115,11 +133,18 @@ class NormalizedDatabaseBuilder {
       'inventoryTransactions': inventoryTransactions,
     };
 
+    const encoder = JsonEncoder.withIndent('  ');
+    final jsonContent = encoder.convert(payload);
+
     final outputFile = File('${outputDir.path}/normalized_database.json');
-    final encoder = const JsonEncoder.withIndent('  ');
-    await outputFile.writeAsString(encoder.convert(payload));
-    stdout
-        .writeln('Normalized database generated at ${outputFile.path}\nCounts: $counts');
+    await outputFile.writeAsString(jsonContent);
+    stdout.writeln(
+      'Normalized database generated at ${outputFile.path}\nCounts: $counts',
+    );
+
+    final assetFile = File('${assetDir.path}/normalized_database.json');
+    await assetFile.writeAsString(jsonContent);
+    stdout.writeln('Copied snapshot to ${assetFile.path} for Flutter assets.');
   }
 
   Future<List<Map<String, dynamic>>> _loadSingleFile<T>({
@@ -152,7 +177,9 @@ class NormalizedDatabaseBuilder {
         .listSync()
         .whereType<File>()
         .where(
-          (file) => file.path.toLowerCase().contains('inv_product_transactionhistory'),
+          (file) => file.path
+              .toLowerCase()
+              .contains('inv_product_transactionhistory'),
         )
         .toList()
       ..sort((a, b) => a.path.compareTo(b.path));
@@ -165,7 +192,8 @@ class NormalizedDatabaseBuilder {
     final allRecords = <Map<String, dynamic>>[];
     var totalRows = 0;
     for (final file in files) {
-      final result = await _processFile(file, ModelMapperService.mapToInventoryTransaction);
+      final result = await _processFile(
+          file, ModelMapperService.mapToInventoryTransaction);
       summaries.add(result.summary('inventoryTransactions', sourceDir.path));
       totalRows += result.rowCount;
       allRecords.addAll(result.records);
@@ -174,8 +202,8 @@ class NormalizedDatabaseBuilder {
       );
     }
     counts['inventoryTransactions'] = allRecords.length;
-    stdout
-        .writeln('Total inventory transactions: ${allRecords.length} (source rows: $totalRows)');
+    stdout.writeln(
+        'Total inventory transactions: ${allRecords.length} (source rows: $totalRows)');
     return allRecords;
   }
 
@@ -190,8 +218,8 @@ class NormalizedDatabaseBuilder {
     }
     final headers = parsedRows.first.keys.toList();
     final dateColumns = _detectDateColumns(headers);
-    final transformed =
-        DataTransformService.transformRows(parsedRows, dateColumns: dateColumns);
+    final transformed = DataTransformService.transformRows(parsedRows,
+        dateColumns: dateColumns);
     final records = <Map<String, dynamic>>[];
     for (var i = 0; i < transformed.length; i++) {
       final mapped = mapper(transformed[i]);

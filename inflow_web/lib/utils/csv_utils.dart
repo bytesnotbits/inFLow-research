@@ -35,9 +35,8 @@ class CsvUtils {
       for (var i = 0; i < headers.length; i++) {
         final header = headers[i];
         if (header.isEmpty) continue;
-        final value = i < row.length && row[i] != null
-            ? row[i].toString().trim()
-            : '';
+        final value =
+            i < row.length && row[i] != null ? row[i].toString().trim() : '';
         mappedRow[header] = value;
       }
       if (mappedRow.isNotEmpty) {

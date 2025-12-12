@@ -20,6 +20,20 @@ class PurchaseOrderLine {
     required this.location,
   });
 
+  factory PurchaseOrderLine.fromJson(Map<String, dynamic> json) {
+    return PurchaseOrderLine(
+      orderNumber: json['orderNumber'] as String? ?? '',
+      vendor: json['vendor'] as String? ?? '',
+      orderDate: DateTime.tryParse(json['orderDate'] as String? ?? '') ??
+          DateTime(1970),
+      productSku: json['productSku'] as String? ?? '',
+      productName: json['productName'] as String? ?? '',
+      quantity: (json['quantity'] as num?)?.toDouble() ?? 0,
+      unitPrice: (json['unitPrice'] as num?)?.toDouble() ?? 0,
+      location: json['location'] as String? ?? '',
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'orderNumber': orderNumber,
         'vendor': vendor,

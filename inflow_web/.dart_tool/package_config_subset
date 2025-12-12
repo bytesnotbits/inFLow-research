@@ -54,6 +54,10 @@ fl_chart
 3.0
 file:///home/codespace/.pub-cache/hosted/pub.dev/fl_chart-0.63.0/
 file:///home/codespace/.pub-cache/hosted/pub.dev/fl_chart-0.63.0/lib/
+flutter_lints
+3.1
+file:///home/codespace/.pub-cache/hosted/pub.dev/flutter_lints-3.0.2/
+file:///home/codespace/.pub-cache/hosted/pub.dev/flutter_lints-3.0.2/lib/
 flutter_plugin_android_lifecycle
 3.2
 file:///home/codespace/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.19/
@@ -62,10 +66,10 @@ hive
 2.12
 file:///home/codespace/.pub-cache/hosted/pub.dev/hive-2.2.3/
 file:///home/codespace/.pub-cache/hosted/pub.dev/hive-2.2.3/lib/
-lint
-3.2
-file:///home/codespace/.pub-cache/hosted/pub.dev/lint-2.3.0/
-file:///home/codespace/.pub-cache/hosted/pub.dev/lint-2.3.0/lib/
+lints
+3.0
+file:///home/codespace/.pub-cache/hosted/pub.dev/lints-3.0.0/
+file:///home/codespace/.pub-cache/hosted/pub.dev/lints-3.0.0/lib/
 matcher
 2.18
 file:///home/codespace/.pub-cache/hosted/pub.dev/matcher-0.12.16/

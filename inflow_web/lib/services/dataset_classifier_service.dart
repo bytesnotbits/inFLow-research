@@ -31,7 +31,8 @@ class DatasetClassifierService {
     if (dominant == null) return false;
     final dominantValue = dominant.key;
     final dominanceRatio = dominant.value;
-    if (dominanceRatio >= 0.95 && _matchesFileName(normalizedFileName, dominantValue)) {
+    if (dominanceRatio >= 0.95 &&
+        _matchesFileName(normalizedFileName, dominantValue)) {
       return true;
     }
     return false;
@@ -48,9 +49,7 @@ class DatasetClassifierService {
   }
 
   static String _normalizeIdentifier(String input) {
-    return input
-        .toUpperCase()
-        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    return input.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
   }
 
   static bool _matchesFileName(String fileName, String value) {
