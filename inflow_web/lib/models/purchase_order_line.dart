@@ -4,6 +4,7 @@ class PurchaseOrderLine {
   final DateTime orderDate;
   final String productSku;
   final String productName;
+  final String productDescription;
   final double quantity;
   final double unitPrice;
   final String location;
@@ -15,6 +16,7 @@ class PurchaseOrderLine {
     required this.orderDate,
     required this.productSku,
     required this.productName,
+    required this.productDescription,
     required this.quantity,
     required this.unitPrice,
     required this.location,
@@ -28,6 +30,7 @@ class PurchaseOrderLine {
           DateTime(1970),
       productSku: json['productSku'] as String? ?? '',
       productName: json['productName'] as String? ?? '',
+      productDescription: json['productDescription'] as String? ?? '',
       quantity: (json['quantity'] as num?)?.toDouble() ?? 0,
       unitPrice: (json['unitPrice'] as num?)?.toDouble() ?? 0,
       location: json['location'] as String? ?? '',
@@ -40,6 +43,7 @@ class PurchaseOrderLine {
         'orderDate': orderDate.toIso8601String(),
         'productSku': productSku,
         'productName': productName,
+        'productDescription': productDescription,
         'quantity': quantity,
         'unitPrice': unitPrice,
         'location': location,

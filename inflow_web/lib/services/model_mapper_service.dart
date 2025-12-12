@@ -11,6 +11,7 @@ class ModelMapperService {
       return Product(
         sku: row['SKU'] ?? row['ProductSKU'] ?? row['ProductName'] ?? '',
         name: row['ProductName'] ?? row['SKU'] ?? '',
+        description: row['ProductDescription'] ?? row['Description'] ?? '',
         category: row['Category'] ?? '',
         isActive: _parseBool(row['IsActive'], fallback: true),
         defaultUnitPrice:
@@ -50,6 +51,8 @@ class ModelMapperService {
         orderDate: DateTime.tryParse(row['OrderDate'] ?? '') ?? DateTime(1970),
         productSku: row['ProductSKU'] ?? row['SKU'] ?? row['ProductName'] ?? '',
         productName: row['ProductName'] ?? row['SKU'] ?? '',
+        productDescription:
+            row['ProductDescription'] ?? row['Description'] ?? '',
         quantity: _parseDouble(row['ProductQuantity'] ?? row['Quantity']),
         unitPrice: _parseDouble(row['ProductUnitPrice'] ?? row['UnitPrice']),
         location: row['Location'] ?? '',
