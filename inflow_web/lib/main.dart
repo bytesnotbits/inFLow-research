@@ -23,6 +23,9 @@ import 'services/model_mapper_service.dart';
 import 'services/normalized_database_service.dart';
 import 'services/validation_service.dart';
 
+const String _accessCode =
+    String.fromEnvironment('INFLOW_ACCESS_CODE', defaultValue: 'research-demo');
+
 void main() {
   runApp(const InflowWebApp());
 }
@@ -136,6 +139,10 @@ class _HomeScreenState extends State<HomeScreen>
   List<ImportedDataset> _importedDatasets = [];
   ImportedDataset? _activeDataset;
   NormalizedDatabase? _normalizedDatabase;
+  bool _isAuthorized = false;
+  final TextEditingController _accessCodeController = TextEditingController();
+  String? _accessError;
+  bool _isVerifyingAccess = false;
   bool _isInitialLoad = true;
   Timer? _initialLoadMessageTimer;
   int _initialLoadMessageIndex = 0;
@@ -174,12 +181,15 @@ class _HomeScreenState extends State<HomeScreen>
     _globalSearchDebounce?.cancel();
     _globalSearchController.dispose();
     _columnSearchController.dispose();
+    _accessCodeController.dispose();
     _rowPulseController.dispose();
     super.dispose();
   }
 
   Future<void> _tryLoadNormalizedDatabase() async {
-    if (_normalizedDatabase != null || !_isInitialLoad) return;
+    if (!_isAuthorized || _normalizedDatabase != null || !_isInitialLoad) {
+      return;
+    }
     _startInitialLoadMessages();
     _showInitialLoadSnackBar();
     try {
@@ -1340,6 +1350,31 @@ class _HomeScreenState extends State<HomeScreen>
     _ingestNormalizedDatabase(normalized);
   }
 
+  Future<void> _submitAccessCode() async {
+    if (_isVerifyingAccess) return;
+    setState(() {
+      _isVerifyingAccess = true;
+      _accessError = null;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    final entered = _accessCodeController.text.trim();
+    if (entered == _accessCode) {
+      setState(() {
+        _isAuthorized = true;
+      });
+      _tryLoadNormalizedDatabase();
+    } else {
+      setState(() {
+        _accessError = 'Incorrect access code. Please try again.';
+      });
+    }
+    if (mounted) {
+      setState(() {
+        _isVerifyingAccess = false;
+      });
+    }
+  }
+
   Future<void> _showColumnVisibilityDialog() async {
     if (_headers == null || _headers!.isEmpty) return;
     final currentVisible = _visibleColumns ?? _headers!.toSet();
@@ -1744,6 +1779,70 @@ class _HomeScreenState extends State<HomeScreen>
     return value.toString();
   }
 
+  Widget _buildAccessGate() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('inFlow Inventory Research'),
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            elevation: 4,
+            margin: const EdgeInsets.all(24),
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 48),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Access Required',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Enter the shared access code to view normalized inventory data.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: _accessCodeController,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Access code',
+                      errorText: _accessError,
+                    ),
+                    onSubmitted: (_) => _submitAccessCode(),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _isVerifyingAccess ? null : _submitAccessCode,
+                      icon: const Icon(Icons.login),
+                      label: _isVerifyingAccess
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Unlock'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInitialLoadingView() {
     return Container(
       decoration: const BoxDecoration(
@@ -1797,6 +1896,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (!_isAuthorized) {
+      return _buildAccessGate();
+    }
     if (_isInitialLoad) {
       return Scaffold(
         appBar: AppBar(
