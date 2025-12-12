@@ -1,0 +1,62 @@
+name: Deploy Flutter Web
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'inflow_web/**'
+      - '.github/workflows/deploy-gh-pages.yml'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-gh-pages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PROJECT_DIR: inflow_web
+  BASE_HREF: /${{ github.event.repository.name }}/
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.PROJECT_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java (for Flutter)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Enable Flutter web
+        run: flutter config --enable-web
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Flutter web bundle
+        run: flutter build web --release --base-href "$BASE_HREF" --web-renderer html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ env.PROJECT_DIR }}/build/web
+          publish_branch: gh-pages
+          force_orphan: true
+          enable_jekyll: false
+          commit_message: Deploy Flutter web app
