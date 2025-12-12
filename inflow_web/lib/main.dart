@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import 'models/imported_dataset.dart';
 import 'models/inventory_transaction.dart';
@@ -20,11 +22,12 @@ import 'services/dataset_classifier_service.dart';
 import 'services/dataset_analysis_service.dart';
 import 'services/file_import_service.dart';
 import 'services/model_mapper_service.dart';
-import 'services/normalized_database_service.dart';
 import 'services/validation_service.dart';
 
-const String _accessCode =
-    String.fromEnvironment('INFLOW_ACCESS_CODE', defaultValue: 'research-demo');
+const String _dataShareLocationHint = String.fromEnvironment(
+  'INFLOW_DATA_SHARE_PATH',
+  defaultValue: r'\\network-share\path\inflow\normalized_database.json',
+);
 
 void main() {
   runApp(const InflowWebApp());
@@ -121,12 +124,6 @@ class _HomeScreenState extends State<HomeScreen>
     "Parsing file. I love this! Crunching numbers is my thing!",
     'Still working over here — promise the app has not frozen.',
   ];
-  static const List<String> _initialLoadMessages = [
-    'Bootstrapping normalized datasets...',
-    'Dusting off the inventory archives...',
-    'Crunching historical CSVs into shape...',
-    'Almost there — prepping dashboards...',
-  ];
   Timer? _loadingMessageTimer;
   int _loadingMessageIndex = 0;
   String _loadingMessage = 'Importing files... please wait';
@@ -139,16 +136,6 @@ class _HomeScreenState extends State<HomeScreen>
   List<ImportedDataset> _importedDatasets = [];
   ImportedDataset? _activeDataset;
   NormalizedDatabase? _normalizedDatabase;
-  bool _isAuthorized = false;
-  final TextEditingController _accessCodeController = TextEditingController();
-  String? _accessError;
-  bool _isVerifyingAccess = false;
-  bool _isInitialLoad = true;
-  Timer? _initialLoadMessageTimer;
-  int _initialLoadMessageIndex = 0;
-  String _initialLoadMessage = _initialLoadMessages.first;
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
-      _initialLoadSnackBar;
 
   @override
   void initState() {
@@ -167,9 +154,6 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
     _globalSearchController.text = _globalSearchQuery;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _tryLoadNormalizedDatabase();
-    });
   }
 
   @override
@@ -177,41 +161,11 @@ class _HomeScreenState extends State<HomeScreen>
     _verticalScrollController.dispose();
     _horizontalScrollController.dispose();
     _loadingMessageTimer?.cancel();
-    _initialLoadMessageTimer?.cancel();
     _globalSearchDebounce?.cancel();
     _globalSearchController.dispose();
     _columnSearchController.dispose();
-    _accessCodeController.dispose();
     _rowPulseController.dispose();
     super.dispose();
-  }
-
-  Future<void> _tryLoadNormalizedDatabase() async {
-    if (!_isAuthorized || _normalizedDatabase != null || !_isInitialLoad) {
-      return;
-    }
-    _startInitialLoadMessages();
-    _showInitialLoadSnackBar();
-    try {
-      final normalized = await const NormalizedDatabaseService().load();
-      if (!mounted) return;
-      if (normalized != null) {
-        _ingestNormalizedDatabase(normalized);
-      } else {
-        _showErrorDialog(
-          'Startup Error',
-          'Unable to load the normalized datasets. Try importing a file instead.',
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isInitialLoad = false;
-        });
-      }
-      _stopInitialLoadMessages();
-      _dismissInitialLoadSnackBar();
-    }
   }
 
   void _ingestNormalizedDatabase(NormalizedDatabase normalized) {
@@ -244,6 +198,56 @@ class _HomeScreenState extends State<HomeScreen>
     _showSuccessSnackBar(
       'Loaded ${newBundles.length} normalized dataset${newBundles.length == 1 ? '' : 's'}.',
     );
+  }
+
+  Future<void> _importNormalizedSnapshot() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) {
+      return;
+    }
+    setState(() {
+      _isImporting = true;
+    });
+    // Give the modal a frame to appear.
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+    _startLoadingMessages(true);
+    try {
+      final file = result.files.first;
+      final bytes = file.bytes ?? await FileImportService.readFileBytes(file);
+      if (bytes == null) {
+        _showErrorDialog(
+          'Import Error',
+          'Unable to read ${file.name}. Please try again.',
+        );
+        return;
+      }
+      final jsonString = utf8.decode(bytes);
+      final normalized = await compute(
+        _parseNormalizedDatabase,
+        jsonString,
+      );
+      if (!mounted) return;
+      _ingestNormalizedDatabase(normalized);
+    } catch (error) {
+      _showErrorDialog(
+        'Snapshot Import Failed',
+        'Could not load the normalized snapshot. $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isImporting = false;
+        });
+      } else {
+        _isImporting = false;
+      }
+      _stopLoadingMessages();
+    }
   }
 
   Future<void> _importFiles() async {
@@ -745,6 +749,12 @@ class _HomeScreenState extends State<HomeScreen>
             child: const Text('Import Files'),
           ),
           const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: _importNormalizedSnapshot,
+            icon: const Icon(Icons.cloud_download),
+            label: const Text('Load Snapshot'),
+          ),
+          const SizedBox(width: 8),
           if (_importedDatasets.isNotEmpty)
             OutlinedButton(
               onPressed: _confirmClearAllDatasets,
@@ -752,8 +762,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
-            onPressed: (!_isInitialLoad &&
-                    _normalizedDatabase != null &&
+            onPressed: (_normalizedDatabase != null &&
                     _importedDatasets.isEmpty)
                 ? _restoreNormalizedDatasets
                 : null,
@@ -887,19 +896,76 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildWelcomeContent() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text(
-            'Welcome! Import your inFlow files to begin.',
-            style: TextStyle(fontSize: 20),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Card(
+          margin: const EdgeInsets.all(24),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.folder_open, size: 56, color: Colors.blue),
+                const SizedBox(height: 12),
+                const Text(
+                  'Load your normalized snapshot to begin',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Download the latest normalized_database.json from the shared drive, '
+                  'then select it below. You can also import raw CSV files at any time.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey.shade700),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: const BoxDecoration(
+                    color: Color(0xffeceff1),
+                    borderRadius: BorderRadius.all(Radius.circular(8)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Shared drive location',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        _dataShareLocationHint,
+                        style: const TextStyle(fontFamily: 'monospace'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _importNormalizedSnapshot,
+                    icon: const Icon(Icons.cloud_download),
+                    label: const Text('Select normalized_database.json'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _importFiles,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Import CSV / Excel files'),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: _importFiles,
-            child: const Text('Import Files'),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1151,43 +1217,6 @@ class _HomeScreenState extends State<HomeScreen>
     _loadingMessage = 'Importing files... please wait';
   }
 
-  void _startInitialLoadMessages() {
-    _initialLoadMessageTimer?.cancel();
-    _initialLoadMessageIndex = 0;
-    _initialLoadMessage = _initialLoadMessages.first;
-    _initialLoadMessageTimer =
-        Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (!mounted) return;
-      setState(() {
-        _initialLoadMessageIndex =
-            (_initialLoadMessageIndex + 1) % _initialLoadMessages.length;
-        _initialLoadMessage = _initialLoadMessages[_initialLoadMessageIndex];
-      });
-    });
-  }
-
-  void _stopInitialLoadMessages() {
-    _initialLoadMessageTimer?.cancel();
-    _initialLoadMessageTimer = null;
-    _initialLoadMessageIndex = 0;
-    _initialLoadMessage = _initialLoadMessages.first;
-  }
-
-  void _showInitialLoadSnackBar() {
-    if (!mounted || _initialLoadSnackBar != null) return;
-    _initialLoadSnackBar = ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Loading normalized datasets...'),
-        duration: Duration(hours: 1),
-      ),
-    );
-  }
-
-  void _dismissInitialLoadSnackBar() {
-    _initialLoadSnackBar?.close();
-    _initialLoadSnackBar = null;
-  }
-
   void _onGlobalSearchChanged(String value) {
     _globalSearchDebounce?.cancel();
     _globalSearchDebounce = Timer(const Duration(milliseconds: 300), () async {
@@ -1349,31 +1378,6 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     _ingestNormalizedDatabase(normalized);
-  }
-
-  Future<void> _submitAccessCode() async {
-    if (_isVerifyingAccess) return;
-    setState(() {
-      _isVerifyingAccess = true;
-      _accessError = null;
-    });
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    final entered = _accessCodeController.text.trim();
-    if (entered == _accessCode) {
-      setState(() {
-        _isAuthorized = true;
-      });
-      _tryLoadNormalizedDatabase();
-    } else {
-      setState(() {
-        _accessError = 'Incorrect access code. Please try again.';
-      });
-    }
-    if (mounted) {
-      setState(() {
-        _isVerifyingAccess = false;
-      });
-    }
   }
 
   Future<void> _showColumnVisibilityDialog() async {
@@ -1780,134 +1784,8 @@ class _HomeScreenState extends State<HomeScreen>
     return value.toString();
   }
 
-  Widget _buildAccessGate() {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('inFlow Inventory Research'),
-      ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Card(
-            elevation: 4,
-            margin: const EdgeInsets.all(24),
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.lock_outline, size: 48),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Access Required',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Enter the shared access code to view normalized inventory data.',
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                  TextField(
-                    controller: _accessCodeController,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: 'Access code',
-                      errorText: _accessError,
-                    ),
-                    onSubmitted: (_) => _submitAccessCode(),
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isVerifyingAccess ? null : _submitAccessCode,
-                      icon: const Icon(Icons.login),
-                      label: _isVerifyingAccess
-                          ? const SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Unlock'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInitialLoadingView() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF0f2027), Color(0xFF203a43), Color(0xFF2c5364)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.inventory_2_outlined,
-              color: Colors.white,
-              size: 72,
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'inFlow Inventory Research',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            const CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-            ),
-            const SizedBox(height: 16),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 400),
-              child: Text(
-                _initialLoadMessage,
-                key: ValueKey(_initialLoadMessage),
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 16,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (!_isAuthorized) {
-      return _buildAccessGate();
-    }
-    if (_isInitialLoad) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('inFlow Inventory Research'),
-        ),
-        body: _buildInitialLoadingView(),
-      );
-    }
     final hasDatasets = _importedDatasets.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
@@ -2076,4 +1954,9 @@ _DatasetProcessingResult _processDataset(_DatasetProcessingPayload payload) {
     purchaseOrderLines: purchaseOrderLines,
     inventoryTransactions: inventoryTransactions,
   );
+}
+
+NormalizedDatabase _parseNormalizedDatabase(String jsonString) {
+  final payload = json.decode(jsonString) as Map<String, dynamic>;
+  return NormalizedDatabase.fromJson(payload);
 }

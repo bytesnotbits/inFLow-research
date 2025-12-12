@@ -22,6 +22,7 @@ concurrency:
 env:
   PROJECT_DIR: inflow_web
   BASE_HREF: /${{ github.event.repository.name }}/
+  DATA_SHARE_HINT: ${{ vars.INFLOW_DATA_SHARE_PATH }}
 
 jobs:
   build:
@@ -55,7 +56,12 @@ jobs:
         run: flutter pub get
 
       - name: Build Flutter web bundle
-        run: flutter build web --release --base-href "$BASE_HREF"
+        run: |
+          ARGS=(--release "--base-href" "$BASE_HREF")
+          if [ -n "${DATA_SHARE_HINT:-}" ]; then
+            ARGS+=("--dart-define=INFLOW_DATA_SHARE_PATH=${DATA_SHARE_HINT}")
+          fi
+          flutter build web "${ARGS[@]}"
 
       - name: Inject static web shell
         run: |
