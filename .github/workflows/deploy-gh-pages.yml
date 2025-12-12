@@ -53,13 +53,23 @@ jobs:
       - name: Build Flutter web bundle
         run: flutter build web --release --base-href "$BASE_HREF"
 
+      - name: Prepare GitHub Pages artifact
+        run: |
+          rm -rf ../web-dist
+          mkdir -p ../web-dist
+          cp -R build/web/. ../web-dist/
+
       - name: Show build output
-        run: ls -al build/web
+        run: |
+          echo "Flutter build directory:"
+          ls -al build/web
+          echo "Artifact directory:"
+          ls -al ../web-dist
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: inflow_web/build/web
+          path: web-dist
 
   deploy:
     needs: build
