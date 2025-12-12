@@ -57,6 +57,15 @@ jobs:
       - name: Build Flutter web bundle
         run: flutter build web --release --base-href "$BASE_HREF"
 
+      - name: Inject static web shell
+        run: |
+          mkdir -p build/web
+          sed "s|\$FLUTTER_BASE_HREF|$BASE_HREF|g" web/index.html > build/web/index.html
+          if [ -f web/manifest.json ]; then cp web/manifest.json build/web/manifest.json; fi
+          rm -rf build/web/splash
+          if [ -d web/splash ]; then cp -R web/splash build/web/; fi
+          if [ -f web/favicon.png ]; then cp web/favicon.png build/web/; fi
+
       - name: Prepare GitHub Pages artifact
         run: |
           rm -rf ../web-dist
