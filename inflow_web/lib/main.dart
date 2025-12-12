@@ -118,6 +118,12 @@ class _HomeScreenState extends State<HomeScreen>
     "Parsing file. I love this! Crunching numbers is my thing!",
     'Still working over here — promise the app has not frozen.',
   ];
+  static const List<String> _initialLoadMessages = [
+    'Bootstrapping normalized datasets...',
+    'Dusting off the inventory archives...',
+    'Crunching historical CSVs into shape...',
+    'Almost there — prepping dashboards...',
+  ];
   Timer? _loadingMessageTimer;
   int _loadingMessageIndex = 0;
   String _loadingMessage = 'Importing files... please wait';
@@ -130,6 +136,12 @@ class _HomeScreenState extends State<HomeScreen>
   List<ImportedDataset> _importedDatasets = [];
   ImportedDataset? _activeDataset;
   NormalizedDatabase? _normalizedDatabase;
+  bool _isInitialLoad = true;
+  Timer? _initialLoadMessageTimer;
+  int _initialLoadMessageIndex = 0;
+  String _initialLoadMessage = _initialLoadMessages.first;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
+      _initialLoadSnackBar;
 
   @override
   void initState() {
@@ -158,6 +170,7 @@ class _HomeScreenState extends State<HomeScreen>
     _verticalScrollController.dispose();
     _horizontalScrollController.dispose();
     _loadingMessageTimer?.cancel();
+    _initialLoadMessageTimer?.cancel();
     _globalSearchDebounce?.cancel();
     _globalSearchController.dispose();
     _columnSearchController.dispose();
@@ -166,10 +179,28 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _tryLoadNormalizedDatabase() async {
-    if (_normalizedDatabase != null) return;
-    final normalized = await const NormalizedDatabaseService().load();
-    if (!mounted || normalized == null) return;
-    _ingestNormalizedDatabase(normalized);
+    if (_normalizedDatabase != null || !_isInitialLoad) return;
+    _startInitialLoadMessages();
+    _showInitialLoadSnackBar();
+    try {
+      final normalized = await const NormalizedDatabaseService().load();
+      if (!mounted) return;
+      if (normalized != null) {
+        _ingestNormalizedDatabase(normalized);
+      } else {
+        _showErrorDialog(
+          'Startup Error',
+          'Unable to load the normalized datasets. Try importing a file instead.',
+        );
+      }
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isInitialLoad = false;
+      });
+      _stopInitialLoadMessages();
+      _dismissInitialLoadSnackBar();
+    }
   }
 
   void _ingestNormalizedDatabase(NormalizedDatabase normalized) {
@@ -705,9 +736,19 @@ class _HomeScreenState extends State<HomeScreen>
           const SizedBox(width: 8),
           if (_importedDatasets.isNotEmpty)
             OutlinedButton(
-              onPressed: _clearAllDatasets,
-              child: const Text('Clear All'),
+              onPressed: _confirmClearAllDatasets,
+              child: const Text('Reset Workspace'),
             ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: (!_isInitialLoad &&
+                    _normalizedDatabase != null &&
+                    _importedDatasets.isEmpty)
+                ? _restoreNormalizedDatasets
+                : null,
+            icon: const Icon(Icons.replay),
+            label: const Text('Reload Baseline Data'),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: TextField(
@@ -1011,26 +1052,32 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
-            GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onPanUpdate: (details) {
-                final currentWidth = _catalogWidthFraction * totalWidth;
-                final newWidth = (currentWidth + details.delta.dx).clamp(
-                  minCatalogWidth,
-                  maxCatalogWidth,
-                );
-                setState(() {
-                  _catalogWidthFraction = newWidth / totalWidth;
-                });
-              },
-              child: SizedBox(
-                width: 12,
-                height: double.infinity,
-                child: Center(
-                  child: Container(
-                    width: 2,
-                    height: double.infinity,
-                    color: Colors.grey.shade300,
+            MouseRegion(
+              cursor: SystemMouseCursors.resizeColumn,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragUpdate: (details) {
+                  final currentWidth = _catalogWidthFraction * totalWidth;
+                  final newWidth = (currentWidth + details.delta.dx).clamp(
+                    minCatalogWidth,
+                    maxCatalogWidth,
+                  );
+                  setState(() {
+                    _catalogWidthFraction = newWidth / totalWidth;
+                  });
+                },
+                child: SizedBox(
+                  width: 24,
+                  height: double.infinity,
+                  child: Center(
+                    child: Container(
+                      width: 4,
+                      height: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade400,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1091,6 +1138,43 @@ class _HomeScreenState extends State<HomeScreen>
     _loadingMessageTimer = null;
     _loadingMessageIndex = 0;
     _loadingMessage = 'Importing files... please wait';
+  }
+
+  void _startInitialLoadMessages() {
+    _initialLoadMessageTimer?.cancel();
+    _initialLoadMessageIndex = 0;
+    _initialLoadMessage = _initialLoadMessages.first;
+    _initialLoadMessageTimer =
+        Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!mounted) return;
+      setState(() {
+        _initialLoadMessageIndex =
+            (_initialLoadMessageIndex + 1) % _initialLoadMessages.length;
+        _initialLoadMessage = _initialLoadMessages[_initialLoadMessageIndex];
+      });
+    });
+  }
+
+  void _stopInitialLoadMessages() {
+    _initialLoadMessageTimer?.cancel();
+    _initialLoadMessageTimer = null;
+    _initialLoadMessageIndex = 0;
+    _initialLoadMessage = _initialLoadMessages.first;
+  }
+
+  void _showInitialLoadSnackBar() {
+    if (!mounted || _initialLoadSnackBar != null) return;
+    _initialLoadSnackBar = ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Loading normalized datasets...'),
+        duration: Duration(hours: 1),
+      ),
+    );
+  }
+
+  void _dismissInitialLoadSnackBar() {
+    _initialLoadSnackBar?..close();
+    _initialLoadSnackBar = null;
   }
 
   void _onGlobalSearchChanged(String value) {
@@ -1214,6 +1298,46 @@ class _HomeScreenState extends State<HomeScreen>
       _datasetProcessingCache.clear();
     });
     _syncRowCountWarningAnimation();
+  }
+
+  Future<void> _confirmClearAllDatasets() async {
+    final shouldClear = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset workspace?'),
+        content: const Text(
+          'This will remove every loaded dataset, including the preloaded normalized data. '
+          'You can reload the baseline data afterward using the "Reload Baseline Data" button.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    if (shouldClear == true) {
+      _clearAllDatasets();
+      _showSuccessSnackBar('Workspace reset. Click "Reload Baseline Data" to restore defaults.');
+    }
+  }
+
+  void _restoreNormalizedDatasets() {
+    final normalized = _normalizedDatabase;
+    if (normalized == null) {
+      _showErrorDialog(
+        'No baseline data',
+        'The normalized database is unavailable. Please rerun the normalization script or import files manually.',
+      );
+      return;
+    }
+    _ingestNormalizedDatabase(normalized);
   }
 
   Future<void> _showColumnVisibilityDialog() async {
@@ -1620,8 +1744,67 @@ class _HomeScreenState extends State<HomeScreen>
     return value.toString();
   }
 
+  Widget _buildInitialLoadingView() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF0f2027), Color(0xFF203a43), Color(0xFF2c5364)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.inventory_2_outlined,
+              color: Colors.white,
+              size: 72,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'inFlow Inventory Research',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+            const SizedBox(height: 16),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 400),
+              child: Text(
+                _initialLoadMessage,
+                key: ValueKey(_initialLoadMessage),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isInitialLoad) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('inFlow Inventory Research'),
+        ),
+        body: _buildInitialLoadingView(),
+      );
+    }
     final hasDatasets = _importedDatasets.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
