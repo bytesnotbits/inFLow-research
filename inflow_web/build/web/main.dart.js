@@ -82876,8 +82876,7 @@ s=4
 break
 case 3:n=[2]
 case 4:p=2
-if(m.c==null){s=1
-break}m.a2(new A.agR(m))
+if(m.c!=null)m.a2(new A.agR(m))
 k=m.xr
 if(k!=null)k.aU(0)
 m.xr=null
@@ -83234,7 +83233,7 @@ while(true)switch(s){case 0:if(p.x1){s=1
 break}p.a2(new A.agN(p))
 s=3
 return A.S(A.k8(B.M,null,t.H),$async$qP)
-case 3:if(B.d.dY(p.ry.a.a)==="mmdept@hctc.coop:notyours"){p.a2(new A.agO(p))
+case 3:if(B.d.dY(p.ry.a.a)==="research-demo"){p.a2(new A.agO(p))
 p.qU()}else p.a2(new A.agP(p))
 if(p.c!=null)p.a2(new A.agQ(p))
 case 1:return A.U(q,r)}})
