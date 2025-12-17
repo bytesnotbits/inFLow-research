@@ -12,6 +12,7 @@ class ModelMapperService {
         sku: row['SKU'] ?? row['ProductSKU'] ?? row['ProductName'] ?? '',
         name: row['ProductName'] ?? row['SKU'] ?? '',
         description: row['ProductDescription'] ?? row['Description'] ?? '',
+        remarks: row['Remarks'] ?? row['ProductRemarks'] ?? row['Notes'] ?? '',
         category: row['Category'] ?? '',
         isActive: _parseBool(row['IsActive'], fallback: true),
         defaultUnitPrice:

@@ -927,19 +927,19 @@ class _HomeScreenState extends State<HomeScreen>
                     color: Color(0xffeceff1),
                     borderRadius: BorderRadius.all(Radius.circular(8)),
                   ),
-                  child: Column(
+                  child: const Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Shared drive location',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      SizedBox(height: 6),
                       SelectableText(
                         _dataShareLocationHint,
-                        style: const TextStyle(fontFamily: 'monospace'),
+                        style: TextStyle(fontFamily: 'monospace'),
                       ),
                     ],
                   ),
