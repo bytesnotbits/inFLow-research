@@ -22,6 +22,7 @@ import 'services/dataset_classifier_service.dart';
 import 'services/dataset_analysis_service.dart';
 import 'services/file_import_service.dart';
 import 'services/model_mapper_service.dart';
+import 'services/row_sort_service.dart';
 import 'services/validation_service.dart';
 
 const String _dataShareLocationHint = String.fromEnvironment(
@@ -1732,16 +1733,18 @@ class _HomeScreenState extends State<HomeScreen>
     if (records.isEmpty) return null;
     final rows = _normalizedRecordsToRows(records);
     if (rows.isEmpty) return null;
-    final headers = rows.first.keys.toList();
-    final analysis = DatasetAnalysisService.analyzeDataset(rows, headers);
+    final sortedRows = RowSortService.sortByDate(rows);
+    final headers = sortedRows.first.keys.toList();
+    final analysis =
+        DatasetAnalysisService.analyzeDataset(sortedRows, headers);
     final dataset = ImportedDataset(
       fileName: label,
       importedAt: generatedAt,
-      rows: rows,
+      rows: sortedRows,
       headers: headers,
     );
     final values = records.map((record) => record.record).toList();
-    final result = buildResult(rows, headers, analysis, values);
+    final result = buildResult(sortedRows, headers, analysis, values);
     return _NormalizedDatasetBundle(
       dataset: dataset,
       result: result,
@@ -1926,27 +1929,31 @@ _DatasetProcessingResult _processDataset(_DatasetProcessingPayload payload) {
     dateColumns: payload.dateColumns,
     columnRenames: payload.isReel ? const {'Sublocation': 'ReelNumber'} : null,
   );
+  final sortedRows = RowSortService.sortByDate(
+    transformed,
+    preferredColumns: payload.dateColumns,
+  );
   final headers =
-      transformed.isNotEmpty ? transformed.first.keys.toList() : <String>[];
-  final analysis = DatasetAnalysisService.analyzeDataset(transformed, headers);
-  final products = transformed
+      sortedRows.isNotEmpty ? sortedRows.first.keys.toList() : <String>[];
+  final analysis = DatasetAnalysisService.analyzeDataset(sortedRows, headers);
+  final products = sortedRows
       .map(ModelMapperService.mapToProduct)
       .whereType<Product>()
       .toList();
-  final salesOrderLines = transformed
+  final salesOrderLines = sortedRows
       .map(ModelMapperService.mapToSalesOrderLine)
       .whereType<SalesOrderLine>()
       .toList();
-  final purchaseOrderLines = transformed
+  final purchaseOrderLines = sortedRows
       .map(ModelMapperService.mapToPurchaseOrderLine)
       .whereType<PurchaseOrderLine>()
       .toList();
-  final inventoryTransactions = transformed
+  final inventoryTransactions = sortedRows
       .map(ModelMapperService.mapToInventoryTransaction)
       .whereType<InventoryTransaction>()
       .toList();
   return _DatasetProcessingResult(
-    rows: transformed,
+    rows: sortedRows,
     headers: headers,
     analysis: analysis,
     products: products,
