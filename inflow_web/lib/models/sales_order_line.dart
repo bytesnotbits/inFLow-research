@@ -1,6 +1,7 @@
 class SalesOrderLine {
   final String orderNumber;
   final String customer;
+  final String contact;
   final DateTime orderDate;
   final String productSku;
   final String productName;
@@ -13,6 +14,7 @@ class SalesOrderLine {
   SalesOrderLine({
     required this.orderNumber,
     required this.customer,
+    required this.contact,
     required this.orderDate,
     required this.productSku,
     required this.productName,
@@ -26,6 +28,7 @@ class SalesOrderLine {
     return SalesOrderLine(
       orderNumber: json['orderNumber'] as String? ?? '',
       customer: json['customer'] as String? ?? '',
+      contact: json['contact'] as String? ?? '',
       orderDate: DateTime.tryParse(json['orderDate'] as String? ?? '') ??
           DateTime(1970),
       productSku: json['productSku'] as String? ?? '',
@@ -42,6 +45,7 @@ class SalesOrderLine {
   Map<String, dynamic> toJson() => {
         'orderNumber': orderNumber,
         'customer': customer,
+        'contact': contact,
         'orderDate': orderDate.toIso8601String(),
         'productSku': productSku,
         'productName': productName,

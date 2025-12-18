@@ -171,33 +171,61 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _ingestNormalizedDatabase(NormalizedDatabase normalized) {
     final bundles = _buildNormalizedDatasetBundles(normalized);
-    final newBundles = bundles
-        .where(
-          (bundle) =>
-              !_datasetProcessingCache.containsKey(bundle.dataset.fileName),
-        )
-        .toList();
-    if (newBundles.isEmpty) {
+    if (bundles.isEmpty) {
       setState(() {
         _normalizedDatabase = normalized;
       });
       return;
     }
+
+    final activeFileName = _activeDataset?.fileName;
+    final bundleMap = <String, _NormalizedDatasetBundle>{
+      for (final bundle in bundles) bundle.dataset.fileName: bundle,
+    };
+
+    for (final entry in bundleMap.entries) {
+      _datasetProcessingCache[entry.key] = entry.value.result;
+    }
+
+    final updatedDatasets = <ImportedDataset>[];
+    for (final existing in _importedDatasets) {
+      final replacement = bundleMap[existing.fileName];
+      if (replacement != null) {
+        updatedDatasets.add(replacement.dataset);
+      } else {
+        updatedDatasets.add(existing);
+      }
+    }
+    for (final entry in bundleMap.entries) {
+      final alreadyIncluded = updatedDatasets.any(
+        (dataset) => dataset.fileName == entry.key,
+      );
+      if (!alreadyIncluded) {
+        updatedDatasets.add(entry.value.dataset);
+      }
+    }
+
     setState(() {
       _normalizedDatabase = normalized;
-      _importedDatasets = [
-        ..._importedDatasets,
-        ...newBundles.map((bundle) => bundle.dataset),
-      ];
-      for (final bundle in newBundles) {
-        _datasetProcessingCache[bundle.dataset.fileName] = bundle.result;
-      }
+      _importedDatasets = updatedDatasets;
     });
-    if (_activeDataset == null && newBundles.isNotEmpty) {
-      _updateActiveDataset(newBundles.first.dataset);
+
+    ImportedDataset? nextActive;
+    if (activeFileName != null) {
+      for (final dataset in updatedDatasets) {
+        if (dataset.fileName == activeFileName) {
+          nextActive = dataset;
+          break;
+        }
+      }
     }
+    nextActive ??= updatedDatasets.isNotEmpty ? updatedDatasets.first : null;
+    if (nextActive != null) {
+      _updateActiveDataset(nextActive);
+    }
+
     _showSuccessSnackBar(
-      'Loaded ${newBundles.length} normalized dataset${newBundles.length == 1 ? '' : 's'}.',
+      'Loaded ${bundleMap.length} normalized dataset${bundleMap.length == 1 ? '' : 's'}.',
     );
   }
 

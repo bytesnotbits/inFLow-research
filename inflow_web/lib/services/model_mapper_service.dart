@@ -30,6 +30,7 @@ class ModelMapperService {
       return SalesOrderLine(
         orderNumber: row['OrderNumber'] ?? '',
         customer: row['Customer'] ?? '',
+        contact: row['Contact'] ?? row['ContactName'] ?? '',
         orderDate: DateTime.tryParse(row['OrderDate'] ?? '') ?? DateTime(1970),
         productSku: row['ProductSKU'] ?? row['SKU'] ?? row['ProductName'] ?? '',
         productName: row['ProductName'] ?? row['SKU'] ?? '',
